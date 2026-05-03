@@ -117,6 +117,7 @@ jobs:
           $ObsBuildDir = Join-Path $env:OBS_SOURCE_DIR "build_x64"
           $LibobsDir = Join-Path $ObsBuildDir "libobs"
           $W32PthreadsDir = Join-Path $ObsBuildDir "deps\w32-pthreads"
+          $LibobsConfig = Join-Path $LibobsDir "libobsConfig.cmake"
 
           $PrefixPaths = @($LibobsDir, $W32PthreadsDir)
           $CachePath = Join-Path $ObsBuildDir "CMakeCache.txt"
@@ -130,6 +131,68 @@ jobs:
             $PrefixPaths += $CachePrefix -split ';'
           }
 
+          $PackageDirArgs = [ordered]@{
+            "libobs_DIR" = $LibobsDir
+            "w32-pthreads_DIR" = $W32PthreadsDir
+          }
+
+          Select-String `
+            -Path $CachePath `
+            -Pattern '^([^#/:]+_DIR):PATH=(.*)$' |
+            ForEach-Object {
+              $Name = $_.Matches[0].Groups[1].Value
+              $Value = $_.Matches[0].Groups[2].Value
+              if (-not [string]::IsNullOrWhiteSpace($Value) -and
+                  $Value -notmatch '-NOTFOUND$' -and
+                  (Test-Path -LiteralPath $Value)) {
+                $PackageDirArgs[$Name] = $Value
+                $PrefixPaths += $Value
+              }
+            }
+
+          $SearchRoots = @(
+            $ObsBuildDir,
+            (Join-Path $env:OBS_SOURCE_DIR ".deps"),
+            (Join-Path $env:OBS_SOURCE_DIR "deps")
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+
+          $ConfigFiles = @()
+          foreach ($Root in $SearchRoots) {
+            $ConfigFiles += Get-ChildItem -LiteralPath $Root -Recurse -File |
+              Where-Object {
+                $_.Name -like "*Config.cmake" -or
+                $_.Name -like "*-config.cmake"
+              }
+          }
+
+          $Dependencies = Select-String `
+            -Path $LibobsConfig `
+            -Pattern '^\s*find_dependency\(([^\s\)]+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Where-Object { $_ -ne "Threads" } |
+            Select-Object -Unique
+
+          foreach ($Dependency in $Dependencies) {
+            $ArgName = "${Dependency}_DIR"
+            if ($PackageDirArgs.Contains($ArgName)) {
+              continue
+            }
+
+            $Config = $ConfigFiles |
+              Where-Object {
+                $_.Name -ieq "${Dependency}Config.cmake" -or
+                $_.Name -ieq "${Dependency}-config.cmake"
+              } |
+              Select-Object -First 1
+
+            if ($Config -eq $null) {
+              throw "Unable to locate CMake package config for OBS dependency '$Dependency'."
+            }
+
+            $PackageDirArgs[$ArgName] = $Config.DirectoryName
+            $PrefixPaths += $Config.DirectoryName
+          }
+
           $PrefixPaths = $PrefixPaths |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
             ForEach-Object { [System.IO.Path]::GetFullPath($_) } |
@@ -138,15 +201,22 @@ jobs:
           Write-Host "Plugin CMAKE_PREFIX_PATH:"
           $PrefixPaths | ForEach-Object { Write-Host "  $_" }
 
+          Write-Host "Resolved OBS CMake package dirs:"
+          $PackageDirArgs.GetEnumerator() | ForEach-Object {
+            Write-Host "  $($_.Key)=$($_.Value)"
+          }
+
           $CmakeArgs = @(
             "-S", ".",
             "-B", "build",
             "-G", "Visual Studio 17 2022",
             "-A", "x64",
-            "-Dlibobs_DIR=$LibobsDir",
-            "-Dw32-pthreads_DIR=$W32PthreadsDir",
             "-DCMAKE_PREFIX_PATH=$($PrefixPaths -join ';')"
           )
+
+          $PackageDirArgs.GetEnumerator() | ForEach-Object {
+            $CmakeArgs += "-D$($_.Key)=$($_.Value)"
+          }
 
           cmake @CmakeArgs
 
