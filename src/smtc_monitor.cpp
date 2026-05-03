@@ -276,8 +276,26 @@ MediaState capture_wmp_com_fallback(std::vector<std::string> session_ids)
 		const _bstr_t artist = media->getItemInfo(_bstr_t(L"Author"));
 		const _bstr_t composer = media->getItemInfo(_bstr_t(L"WM/Composer"));
 		const _bstr_t album = media->getItemInfo(_bstr_t(L"WM/AlbumTitle"));
+		const _bstr_t album_artist = media->getItemInfo(_bstr_t(L"WM/AlbumArtist"));
 		double duration = media->duration;
 		double position = player->controls->currentPosition;
+
+		WMPLib::WMPPlayState playState = player->playState;
+		PlaybackStatus status = PlaybackStatus::unknown;
+		switch (playState) {
+		case WMPLib::wmppsPlaying:
+			status = PlaybackStatus::playing;
+			break;
+		case WMPLib::wmppsPaused:
+			status = PlaybackStatus::paused;
+			break;
+		case WMPLib::wmppsStopped:
+			status = PlaybackStatus::stopped;
+			break;
+		default:
+			status = PlaybackStatus::opened;
+			break;
+		}
 
 		state.available = true;
 		state.limited_fallback = false;
@@ -285,15 +303,16 @@ MediaState capture_wmp_com_fallback(std::vector<std::string> session_ids)
 		state.is_legacy_wmp_com = true;
 		state.backend = "WMP Legacy COM";
 		state.source_app_id = "wmplayer.exe";
-		state.title = static_cast<const char *>(_bstr_t(title));
-		state.artist = static_cast<const char *>(_bstr_t(artist));
-		state.album = static_cast<const char *>(_bstr_t(album));
-		state.album_artist = static_cast<const char *>(_bstr_t(composer));
+		state.title = wide_to_utf8(static_cast<const wchar_t *>(title));
+		state.artist = wide_to_utf8(static_cast<const wchar_t *>(artist));
+		state.album = wide_to_utf8(static_cast<const wchar_t *>(album));
+		state.album_artist = wide_to_utf8(static_cast<const wchar_t *>(album_artist));
+		state.composer = wide_to_utf8(static_cast<const wchar_t *>(composer));
 		state.start_ms = 0;
 		state.end_ms = static_cast<int64_t>(duration * 1000.0);
 		state.position_ms = static_cast<int64_t>(position * 1000.0);
 		state.timeline_available = state.end_ms > 0;
-		state.playback_status = PlaybackStatus::playing;
+		state.playback_status = status;
 		state.active_sessions = std::move(session_ids);
 		state.captured_at = std::chrono::steady_clock::now();
 		return state;

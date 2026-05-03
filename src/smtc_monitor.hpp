@@ -33,6 +33,7 @@ struct MediaState {
 	std::string artist;
 	std::string album;
 	std::string album_artist;
+	std::string composer;
 	std::string subtitle;
 	std::vector<std::string> genres;
 	std::vector<std::string> active_sessions;

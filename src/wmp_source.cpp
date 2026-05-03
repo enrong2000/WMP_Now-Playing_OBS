@@ -189,15 +189,11 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 
 	if (context.display_mode == 1 && state.available) {
 		std::ostringstream ui;
-		ui << "♪  " << fallback(state.title, "Unknown title") << "
-";
-		ui << "👤 " << fallback(state.artist, "Unknown artist") << "
-";
-		ui << "💿 " << fallback(state.album, "Unknown album") << "
-";
-		if (context.show_composer && !state.album_artist.empty())
-			ui << "✍  " << state.album_artist << "
-";
+		ui << "♪  " << fallback(state.title, "Unknown title") << "\n";
+		ui << "👤 " << fallback(state.artist, "Unknown artist") << "\n";
+		ui << "💿 " << fallback(state.album, "Unknown album") << "\n";
+		if (context.show_composer && !state.composer.empty())
+			ui << "✍  " << state.composer << "\n";
 		ui << progress_bar(ratio, context.progress_width) << "  " << format_time(relative_position) << " / " << (duration > 0 ? format_time(duration) : "--:--");
 		return ui.str();
 	}
@@ -207,7 +203,7 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	replace_all(output, "{artist}", fallback(state.artist, "Unknown artist"));
 	replace_all(output, "{album}", state.album);
 	replace_all(output, "{album_artist}", state.album_artist);
-	replace_all(output, "{composer}", state.album_artist);
+	replace_all(output, "{composer}", state.composer);
 	replace_all(output, "{subtitle}", state.subtitle);
 	replace_all(output, "{genres}", join_strings(state.genres));
 	replace_all(output, "{backend}", state.backend);
@@ -287,15 +283,24 @@ obs_properties_t *source_get_properties(void *)
 
 	obs_properties_add_text(props, "app_filter", "App filter",
 				OBS_TEXT_DEFAULT);
+
+	obs_property_t *display_mode_list = obs_properties_add_list(
+		props, "display_mode", "Display mode",
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(display_mode_list, "Template Text", 0);
+	obs_property_list_add_int(display_mode_list, "UI Card", 1);
+
 	obs_properties_add_text(props, "format", "Format",
 				OBS_TEXT_MULTILINE);
 	obs_properties_add_int_slider(props, "progress_width",
 				      "Progress width", 4, 80, 1);
+	obs_properties_add_bool(props, "show_composer",
+				"Show composer in UI Card mode");
 	obs_properties_add_int_slider(props, "refresh_ms",
 				      "Refresh interval (ms)", 250, 5000,
 				      250);
 	obs_properties_add_bool(props, "enable_wmp_window_fallback",
-				"Use WMP Legacy window title fallback");
+				"Enable WMP Legacy fallbacks (COM + window title)");
 	obs_properties_add_bool(props, "hide_when_empty",
 				"Hide when no media");
 
