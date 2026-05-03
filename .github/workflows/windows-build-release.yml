@@ -114,11 +114,41 @@ jobs:
 
       - name: Configure plugin
         run: |
-          $LibobsDir = Join-Path $env:OBS_SOURCE_DIR "build_x64\libobs"
-          cmake -S . -B build `
-            -G "Visual Studio 17 2022" `
-            -A x64 `
-            -Dlibobs_DIR="$LibobsDir"
+          $ObsBuildDir = Join-Path $env:OBS_SOURCE_DIR "build_x64"
+          $LibobsDir = Join-Path $ObsBuildDir "libobs"
+          $W32PthreadsDir = Join-Path $ObsBuildDir "deps\w32-pthreads"
+
+          $PrefixPaths = @($LibobsDir, $W32PthreadsDir)
+          $CachePath = Join-Path $ObsBuildDir "CMakeCache.txt"
+          $CachePrefix = Select-String `
+            -Path $CachePath `
+            -Pattern '^CMAKE_PREFIX_PATH:.*=(.*)$' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Select-Object -First 1
+
+          if (-not [string]::IsNullOrWhiteSpace($CachePrefix)) {
+            $PrefixPaths += $CachePrefix -split ';'
+          }
+
+          $PrefixPaths = $PrefixPaths |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { [System.IO.Path]::GetFullPath($_) } |
+            Select-Object -Unique
+
+          Write-Host "Plugin CMAKE_PREFIX_PATH:"
+          $PrefixPaths | ForEach-Object { Write-Host "  $_" }
+
+          $CmakeArgs = @(
+            "-S", ".",
+            "-B", "build",
+            "-G", "Visual Studio 17 2022",
+            "-A", "x64",
+            "-Dlibobs_DIR=$LibobsDir",
+            "-Dw32-pthreads_DIR=$W32PthreadsDir",
+            "-DCMAKE_PREFIX_PATH=$($PrefixPaths -join ';')"
+          )
+
+          cmake @CmakeArgs
 
       - name: Build plugin
         run: |

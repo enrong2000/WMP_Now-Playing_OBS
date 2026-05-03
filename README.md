@@ -39,7 +39,7 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 - Pushing a version tag such as `v0.1.0` or `0.1.0` creates or updates a GitHub Release and uploads the plugin zip.
 - Manual runs support an `obs_version` input. The default is OBS Studio `32.1.2`.
 
-The workflow checks out the matching OBS Studio tag and builds `libobs` first, then configures this plugin with the generated `libobsConfig.cmake`. This avoids relying on an external OBS SDK archive.
+The workflow checks out the matching OBS Studio tag and builds `libobs` first, then configures this plugin with the generated `libobsConfig.cmake` and the OBS build dependency paths such as `w32-pthreads`. This avoids relying on an external OBS SDK archive.
 
 ## Source Settings
 
