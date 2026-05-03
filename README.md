@@ -11,7 +11,7 @@ Native OBS source plugin prototype for showing media metadata from Windows Media
 
 ## Current WMP Legacy limitation
 
-SMTC exposes media session metadata and timeline data only for applications that publish an SMTC session. Windows Media Player (Legacy) may not publish one; in that case this plugin can fall back to detecting the visible `wmplayer.exe` window title. The fallback is intentionally limited: it cannot read accurate playback progress, duration, or the real playlist. A complete WMP Legacy integration still requires a WMP-specific plug-in, in-process bridge, or another dedicated integration layer.
+SMTC exposes media session metadata and timeline data only for applications that publish an SMTC session. Windows Media Player (Legacy) may not publish one; in that case this plugin can first tries WMP Legacy COM automation (`WindowsMediaPlayer` / `IWMPMedia`) to read current track metadata and progress. If COM data is unavailable, it falls back to detecting the visible `wmplayer.exe` window title. A complete WMP Legacy integration still requires a WMP-specific plug-in, in-process bridge, or another dedicated integration layer.
 
 ## Build
 
@@ -69,3 +69,13 @@ Available format tokens:
 - `{sessions}`
 - `{diagnostic}`
 - `{wmp_windows}`
+
+
+Additional metadata in legacy COM mode:
+- Composer (`WM/Composer`)
+- Album (`WM/AlbumTitle`)
+- Playback position and duration
+
+Display modes:
+- UI Card (default): card-style structured now-playing panel
+- Template Text: legacy token template mode
