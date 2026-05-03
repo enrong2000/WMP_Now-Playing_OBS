@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WMP Now Playing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="now-playing-card" class="card hidden">
+    <!-- Ambient glow background -->
+    <div class="card-glow"></div>
+
+    <!-- Main content wrapper -->
+    <div class="card-inner">
+      <!-- Music icon / visualizer -->
+      <div class="album-art-area">
+        <div class="vinyl-disc" id="vinyl-disc">
+          <div class="vinyl-inner">
+            <svg class="music-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9 18V5l12-2v13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="6" cy="18" r="3" stroke="currentColor" stroke-width="1.5"/>
+              <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          </div>
+          <div class="vinyl-groove groove-1"></div>
+          <div class="vinyl-groove groove-2"></div>
+          <div class="vinyl-groove groove-3"></div>
+        </div>
+        <!-- Playback state indicator -->
+        <div class="playback-indicator" id="playback-indicator">
+          <div class="eq-bar bar-1"></div>
+          <div class="eq-bar bar-2"></div>
+          <div class="eq-bar bar-3"></div>
+          <div class="eq-bar bar-4"></div>
+        </div>
+      </div>
+
+      <!-- Track info -->
+      <div class="track-info">
+        <div class="track-title-wrap">
+          <span class="track-title" id="track-title">Waiting for music…</span>
+        </div>
+        <div class="track-artist" id="track-artist"></div>
+        <div class="track-album" id="track-album"></div>
+        <div class="track-composer" id="track-composer-row">
+          <span class="composer-label">Composed by</span>
+          <span class="composer-name" id="track-composer"></span>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="progress-section">
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+            <div class="progress-glow" id="progress-glow"></div>
+          </div>
+          <div class="time-row">
+            <span class="time-current" id="time-current">--:--</span>
+            <span class="time-status" id="time-status"></span>
+            <span class="time-duration" id="time-duration">--:--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ===================================================================
+       Configuration — edit these to match your setup
+       =================================================================== */
+    const CONFIG = {
+      // Path to the JSON file written by the OBS plugin.
+      // OBS Browser Source file:// protocol resolves from the local filesystem.
+      // The plugin writes to %APPDATA%/obs-wmp-smtc/now-playing.json by default.
+      jsonUrl: getJsonUrl(),
+      pollIntervalMs: 500,
+      hideDelayMs: 4000,      // hide card N ms after media becomes unavailable
+      animDurationMs: 600,
+    };
+
+    function getJsonUrl() {
+      // Auto-detect: try reading from query params first (?json=path)
+      const params = new URLSearchParams(window.location.search);
+      const custom = params.get('json');
+      if (custom) return custom;
+
+      // Default path — adjust if your APPDATA differs
+      const appdata = getAppdataPath();
+      return `file:///${appdata}/obs-wmp-smtc/now-playing.json`;
+    }
+
+    function getAppdataPath() {
+      // Best-effort detection for OBS Browser Source context
+      try {
+        // In OBS Browser Source, we can read environment via a trick:
+        // Users can also pass ?appdata=C:/Users/xxx/AppData/Roaming
+        const params = new URLSearchParams(window.location.search);
+        const ad = params.get('appdata');
+        if (ad) return ad.replace(/\\/g, '/');
+      } catch (e) {}
+      // Common fallback
+      return 'C:/Users/' + 'EnRonG' + '/AppData/Roaming';
+    }
+
+    /* ===================================================================
+       State
+       =================================================================== */
+    let currentData = null;
+    let previousTitle = '';
+    let hideTimer = null;
+    let isVisible = false;
+
+    const card = document.getElementById('now-playing-card');
+    const titleEl = document.getElementById('track-title');
+    const artistEl = document.getElementById('track-artist');
+    const albumEl = document.getElementById('track-album');
+    const composerRowEl = document.getElementById('track-composer-row');
+    const composerEl = document.getElementById('track-composer');
+    const progressFill = document.getElementById('progress-fill');
+    const progressGlow = document.getElementById('progress-glow');
+    const timeCurrent = document.getElementById('time-current');
+    const timeDuration = document.getElementById('time-duration');
+    const timeStatus = document.getElementById('time-status');
+    const playbackIndicator = document.getElementById('playback-indicator');
+    const vinylDisc = document.getElementById('vinyl-disc');
+
+    /* ===================================================================
+       Polling
+       =================================================================== */
+    async function fetchData() {
+      try {
+        const resp = await fetch(CONFIG.jsonUrl + '?t=' + Date.now(), {
+          cache: 'no-store',
+        });
+        if (!resp.ok) return null;
+        return await resp.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function updateUI(data) {
+      if (!data || !data.available) {
+        scheduleHide();
+        return;
+      }
+
+      cancelHide();
+
+      // Track change detection
+      const trackKey = `${data.title}|${data.artist}|${data.album}`;
+      const changed = trackKey !== previousTitle;
+      previousTitle = trackKey;
+
+      if (changed) {
+        // Animate track change
+        card.classList.add('track-change');
+        setTimeout(() => card.classList.remove('track-change'), 500);
+      }
+
+      // Show card
+      if (!isVisible) {
+        card.classList.remove('hidden');
+        requestAnimationFrame(() => card.classList.add('visible'));
+        isVisible = true;
+      }
+
+      // Update text fields
+      titleEl.textContent = data.title || 'Unknown Title';
+      artistEl.textContent = data.artist || 'Unknown Artist';
+      albumEl.textContent = data.album || '';
+
+      if (data.composer && data.composer.trim() !== '') {
+        composerRowEl.style.display = 'flex';
+        composerEl.textContent = data.composer;
+      } else {
+        composerRowEl.style.display = 'none';
+      }
+
+      // Album visibility
+      albumEl.style.display = data.album ? 'block' : 'none';
+
+      // Progress
+      const progress = Math.max(0, Math.min(1, data.progress || 0));
+      const pct = (progress * 100).toFixed(2) + '%';
+      progressFill.style.width = pct;
+      progressGlow.style.left = pct;
+
+      timeCurrent.textContent = data.position_text || '--:--';
+      timeDuration.textContent = data.duration_text || '--:--';
+
+      // Playback state
+      const isPlaying = data.status === 'Playing';
+      const isPaused = data.status === 'Paused';
+
+      timeStatus.textContent = isPaused ? '⏸' : '';
+
+      if (isPlaying) {
+        playbackIndicator.classList.add('active');
+        vinylDisc.classList.add('spinning');
+        card.classList.remove('paused');
+      } else {
+        playbackIndicator.classList.remove('active');
+        vinylDisc.classList.remove('spinning');
+        if (isPaused) card.classList.add('paused');
+      }
+    }
+
+    function scheduleHide() {
+      if (hideTimer) return;
+      hideTimer = setTimeout(() => {
+        card.classList.remove('visible');
+        card.classList.add('hidden');
+        isVisible = false;
+        hideTimer = null;
+      }, CONFIG.hideDelayMs);
+    }
+
+    function cancelHide() {
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    }
+
+    /* Smooth progress interpolation between polls */
+    let lastPollTime = 0;
+    let lastPosition = 0;
+    let lastDuration = 0;
+    let lastStatus = '';
+
+    function interpolateProgress() {
+      if (!currentData || !currentData.available) return;
+      if (lastStatus !== 'Playing') return;
+      if (lastDuration <= 0) return;
+
+      const elapsed = Date.now() - lastPollTime;
+      const interpolatedPos = lastPosition + elapsed;
+      const ratio = Math.min(interpolatedPos / lastDuration, 1);
+      const pct = (ratio * 100).toFixed(2) + '%';
+
+      progressFill.style.width = pct;
+      progressGlow.style.left = pct;
+      timeCurrent.textContent = formatTime(interpolatedPos);
+    }
+
+    function formatTime(ms) {
+      if (ms < 0) ms = 0;
+      const totalSec = Math.floor(ms / 1000);
+      const hours = Math.floor(totalSec / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+
+      if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      }
+      return `${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    /* ===================================================================
+       Main loop
+       =================================================================== */
+    async function poll() {
+      const data = await fetchData();
+      if (data) {
+        currentData = data;
+        lastPollTime = Date.now();
+        lastPosition = data.position_ms || 0;
+        lastDuration = data.duration_ms || 0;
+        lastStatus = data.status || '';
+        updateUI(data);
+      }
+    }
+
+    // Poll for data
+    setInterval(poll, CONFIG.pollIntervalMs);
+
+    // Smooth interpolation at 30fps
+    setInterval(interpolateProgress, 33);
+
+    // Initial poll
+    poll();
+  </script>
+</body>
+</html>

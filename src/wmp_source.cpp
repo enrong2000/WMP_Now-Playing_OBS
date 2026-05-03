@@ -6,10 +6,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <obs-module.h>
 #include <sstream>
 #include <string>
 #include <string_view>
+
+#include <ShlObj.h>
 
 namespace obs_wmp {
 namespace {
@@ -18,6 +22,22 @@ constexpr const char *kDefaultFormat =
 	"{artist} - {title}\n"
 	"{album}\n"
 	"{position} / {duration} {progress_bar} {status}";
+
+std::string default_json_path()
+{
+	wchar_t *appdata = nullptr;
+	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr,
+					       &appdata)) &&
+	    appdata) {
+		std::filesystem::path dir =
+			std::filesystem::path(appdata) / L"obs-wmp-smtc";
+		CoTaskMemFree(appdata);
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		return (dir / "now-playing.json").string();
+	}
+	return {};
+}
 
 struct SourceContext {
 	obs_source_t *source = nullptr;
@@ -33,6 +53,7 @@ struct SourceContext {
 	int progress_width = 24;
 	float update_elapsed = 0.0f;
 	std::string last_text;
+	std::string json_output_path;
 };
 
 std::string fallback(std::string value, const char *text)
@@ -228,6 +249,93 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	return output;
 }
 
+std::string escape_json(const std::string &input)
+{
+	std::string out;
+	out.reserve(input.size() + 16);
+	for (const char ch : input) {
+		switch (ch) {
+		case '"':
+			out += "\\\"";
+			break;
+		case '\\':
+			out += "\\\\";
+			break;
+		case '\n':
+			out += "\\n";
+			break;
+		case '\r':
+			out += "\\r";
+			break;
+		case '\t':
+			out += "\\t";
+			break;
+		default:
+			out += ch;
+			break;
+		}
+	}
+	return out;
+}
+
+void write_json_file(const SourceContext &context, const MediaState &state)
+{
+	if (context.json_output_path.empty())
+		return;
+
+	const auto start = playable_start(state);
+	const auto end = playable_end(state);
+	const auto duration = end > start ? end - start : 0;
+	const auto position = current_position_ms(state);
+	const auto relative_position =
+		duration > 0 ? std::clamp(position - start, int64_t{0}, duration)
+			     : std::max<int64_t>(position, 0);
+	const auto ratio = duration > 0
+				   ? static_cast<double>(relative_position) /
+					     static_cast<double>(duration)
+				   : 0.0;
+
+	std::ostringstream json;
+	json << "{\n";
+	json << "  \"available\": " << (state.available ? "true" : "false")
+	     << ",\n";
+	json << "  \"title\": \"" << escape_json(state.title) << "\",\n";
+	json << "  \"artist\": \"" << escape_json(state.artist) << "\",\n";
+	json << "  \"album\": \"" << escape_json(state.album) << "\",\n";
+	json << "  \"album_artist\": \"" << escape_json(state.album_artist)
+	     << "\",\n";
+	json << "  \"composer\": \"" << escape_json(state.composer)
+	     << "\",\n";
+	json << "  \"status\": \""
+	     << playback_status_text(state.playback_status) << "\",\n";
+	json << "  \"backend\": \"" << escape_json(state.backend)
+	     << "\",\n";
+	json << "  \"position_ms\": " << relative_position << ",\n";
+	json << "  \"duration_ms\": " << duration << ",\n";
+	json << "  \"progress\": " << ratio << ",\n";
+	json << "  \"position_text\": \""
+	     << (state.timeline_available ? format_time(relative_position)
+					    : "--:--")
+	     << "\",\n";
+	json << "  \"duration_text\": \""
+	     << (duration > 0 ? format_time(duration) : "--:--")
+	     << "\"\n";
+	json << "}\n";
+
+	/* Atomic write: write to a temp file, then rename */
+	std::filesystem::path target(context.json_output_path);
+	std::filesystem::path temp = target;
+	temp += ".tmp";
+
+	std::ofstream file(temp, std::ios::trunc | std::ios::binary);
+	if (file) {
+		file << json.str();
+		file.close();
+		std::error_code ec;
+		std::filesystem::rename(temp, target, ec);
+	}
+}
+
 obs_source_t *create_text_source()
 {
 	obs_data_t *settings = obs_data_create();
@@ -275,6 +383,8 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "progress_width", 24);
 	obs_data_set_default_int(settings, "display_mode", 1);
 	obs_data_set_default_bool(settings, "show_composer", true);
+	obs_data_set_default_string(settings, "json_output_path",
+				    default_json_path().c_str());
 }
 
 obs_properties_t *source_get_properties(void *)
@@ -303,6 +413,9 @@ obs_properties_t *source_get_properties(void *)
 				"Enable WMP Legacy fallbacks (COM + window title)");
 	obs_properties_add_bool(props, "hide_when_empty",
 				"Hide when no media");
+	obs_properties_add_path(props, "json_output_path",
+				"JSON output path (for overlay)",
+				OBS_PATH_FILE_SAVE, "JSON (*.json)", nullptr);
 
 	return props;
 }
@@ -325,9 +438,14 @@ void source_update(void *data, obs_data_t *settings)
 		static_cast<int>(obs_data_get_int(settings, "progress_width"));
 	context->display_mode = static_cast<int>(obs_data_get_int(settings, "display_mode"));
 	context->show_composer = obs_data_get_bool(settings, "show_composer");
+	context->json_output_path =
+		obs_data_get_string(settings, "json_output_path");
 
 	if (context->format.empty())
 		context->format = kDefaultFormat;
+
+	if (context->json_output_path.empty())
+		context->json_output_path = default_json_path();
 
 	context->monitor.configure(context->app_filter, context->refresh_ms,
 				   context->enable_wmp_window_fallback);
@@ -369,6 +487,9 @@ void source_video_tick(void *data, float seconds)
 
 	const auto state = context->monitor.snapshot();
 	const auto text = render_text(*context, state);
+
+	write_json_file(*context, state);
+
 	if (text == context->last_text)
 		return;
 
