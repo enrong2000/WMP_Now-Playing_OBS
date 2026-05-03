@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(obs-wmp-smtc VERSION 0.1.0 LANGUAGES CXX)
+project(obs-wmp-smtc VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +21,9 @@ target_link_libraries(obs-wmp-smtc
   PRIVATE
     OBS::libobs
     user32
-    windowsapp
+    ole32
+    oleaut32
+    comsuppw
 )
 
 set_target_properties(obs-wmp-smtc PROPERTIES

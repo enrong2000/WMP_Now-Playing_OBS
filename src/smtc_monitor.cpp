@@ -1,13 +1,12 @@
 #include "smtc_monitor.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
-#include <cwctype>
 #include <exception>
 #include <sstream>
-#include <string_view>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <Windows.h>
 #include <ObjBase.h>
@@ -15,56 +14,12 @@
 
 #import "wmp.dll" rename_namespace("WMPLib") named_guids
 
-#include <winrt/Windows.Foundation.Collections.h>
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.Media.Control.h>
-#include <winrt/Windows.Media.h>
-#include <winrt/base.h>
-
 namespace obs_wmp {
 namespace {
 
-using winrt::Windows::Media::Control::
-	GlobalSystemMediaTransportControlsSession;
-using winrt::Windows::Media::Control::
-	GlobalSystemMediaTransportControlsSessionManager;
-using winrt::Windows::Media::Control::
-	GlobalSystemMediaTransportControlsSessionPlaybackStatus;
-
-std::string lowercase(std::string value)
-{
-	std::transform(value.begin(), value.end(), value.begin(),
-		       [](unsigned char ch) {
-			       return static_cast<char>(std::tolower(ch));
-		       });
-	return value;
-}
-
-std::wstring lowercase(std::wstring value)
-{
-	std::transform(value.begin(), value.end(), value.begin(),
-		       [](wchar_t ch) {
-			       return static_cast<wchar_t>(std::towlower(ch));
-		       });
-	return value;
-}
-
-std::string trim_copy(std::string value)
-{
-	const auto first = value.find_first_not_of(" \t\r\n");
-	if (first == std::string::npos)
-		return {};
-
-	const auto last = value.find_last_not_of(" \t\r\n");
-	return value.substr(first, last - first + 1);
-}
-
-bool ends_with(std::string_view value, std::string_view suffix)
-{
-	return value.size() >= suffix.size() &&
-	       value.compare(value.size() - suffix.size(), suffix.size(),
-			     suffix) == 0;
-}
+/* ===================================================================
+ *  String conversion utilities
+ * =================================================================== */
 
 std::string wide_to_utf8(const std::wstring &value)
 {
@@ -89,12 +44,24 @@ std::string wide_to_utf8(const wchar_t *value)
 	return value ? wide_to_utf8(std::wstring(value)) : std::string{};
 }
 
-std::string narrow_to_utf8(const char *value)
+std::string bstr_to_utf8(const _bstr_t &bs)
+{
+	const wchar_t *raw = static_cast<const wchar_t *>(bs);
+	return raw ? wide_to_utf8(raw) : std::string{};
+}
+
+std::string tchar_to_utf8(const wchar_t *value)
+{
+	return wide_to_utf8(value);
+}
+
+std::string tchar_to_utf8(const char *value)
 {
 	if (!value || value[0] == '\0')
 		return {};
 
-	const int needed = MultiByteToWideChar(CP_ACP, 0, value, -1, nullptr, 0);
+	const int needed =
+		MultiByteToWideChar(CP_ACP, 0, value, -1, nullptr, 0);
 	if (needed <= 0)
 		return {};
 
@@ -106,214 +73,158 @@ std::string narrow_to_utf8(const char *value)
 	return wide_to_utf8(converted);
 }
 
-std::string tchar_to_utf8(const wchar_t *value)
-{
-	return wide_to_utf8(value);
-}
+/* ===================================================================
+ *  Helper: unavailable state factory
+ * =================================================================== */
 
-std::string tchar_to_utf8(const char *value)
-{
-	return narrow_to_utf8(value);
-}
-
-std::wstring process_name_for_window(HWND window)
-{
-	DWORD process_id = 0;
-	GetWindowThreadProcessId(window, &process_id);
-	if (process_id == 0)
-		return {};
-
-	HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
-				     process_id);
-	if (!process)
-		return {};
-
-	std::vector<wchar_t> path(32768);
-	DWORD length = static_cast<DWORD>(path.size());
-	std::wstring process_name;
-
-	if (QueryFullProcessImageNameW(process, 0, path.data(), &length) &&
-	    length > 0) {
-		std::wstring full_path(path.data(), length);
-		const auto split = full_path.find_last_of(L"\\/");
-		process_name = split == std::wstring::npos
-				       ? full_path
-				       : full_path.substr(split + 1);
-	}
-
-	CloseHandle(process);
-	return lowercase(process_name);
-}
-
-std::wstring window_title(HWND window)
-{
-	const int length = GetWindowTextLengthW(window);
-	if (length <= 0)
-		return {};
-
-	std::vector<wchar_t> buffer(static_cast<size_t>(length) + 1);
-	const int copied = GetWindowTextW(window, buffer.data(), length + 1);
-	if (copied <= 0)
-		return {};
-
-	return std::wstring(buffer.data(), static_cast<size_t>(copied));
-}
-
-struct WmpWindowList {
-	std::vector<std::string> titles;
-};
-
-BOOL CALLBACK enum_wmp_windows(HWND window, LPARAM user_data)
-{
-	if (!IsWindowVisible(window))
-		return TRUE;
-
-	if (process_name_for_window(window) != L"wmplayer.exe")
-		return TRUE;
-
-	const auto title = trim_copy(wide_to_utf8(window_title(window)));
-	if (!title.empty())
-		reinterpret_cast<WmpWindowList *>(user_data)->titles.push_back(title);
-
-	return TRUE;
-}
-
-std::vector<std::string> find_wmp_window_titles()
-{
-	WmpWindowList windows;
-	EnumWindows(enum_wmp_windows, reinterpret_cast<LPARAM>(&windows));
-	return windows.titles;
-}
-
-std::string media_title_from_wmp_window(std::string title)
-{
-	title = trim_copy(std::move(title));
-	const std::string suffix = " - Windows Media Player";
-
-	if (ends_with(title, suffix))
-		title.resize(title.size() - suffix.size());
-
-	title = trim_copy(std::move(title));
-	if (title == "Windows Media Player")
-		return {};
-
-	return title;
-}
-
-bool wmp_fallback_requested(const std::string &filter)
-{
-	const auto lowered = lowercase(filter);
-	return lowered.empty() || lowered.find("wmp") != std::string::npos ||
-	       lowered.find("wmplayer") != std::string::npos ||
-	       lowered.find("windows media") != std::string::npos;
-}
-
-int64_t to_ms(winrt::Windows::Foundation::TimeSpan value)
-{
-	return std::chrono::duration_cast<std::chrono::milliseconds>(value)
-		.count();
-}
-
-PlaybackStatus to_playback_status(
-	GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
-{
-	switch (status) {
-	case GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed:
-		return PlaybackStatus::closed;
-	case GlobalSystemMediaTransportControlsSessionPlaybackStatus::Opened:
-		return PlaybackStatus::opened;
-	case GlobalSystemMediaTransportControlsSessionPlaybackStatus::Changing:
-		return PlaybackStatus::changing;
-	case GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped:
-		return PlaybackStatus::stopped;
-	case GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing:
-		return PlaybackStatus::playing;
-	case GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused:
-		return PlaybackStatus::paused;
-	default:
-		return PlaybackStatus::unknown;
-	}
-}
-
-std::string join_hstrings(
-	const winrt::Windows::Foundation::Collections::IVectorView<
-		winrt::hstring> &values)
-{
-	std::ostringstream stream;
-	bool first = true;
-
-	for (const auto &value : values) {
-		if (!first)
-			stream << ", ";
-		first = false;
-		stream << winrt::to_string(value);
-	}
-
-	return stream.str();
-}
-
-GlobalSystemMediaTransportControlsSession pick_session(
-	const GlobalSystemMediaTransportControlsSessionManager &manager,
-	const std::string &filter, std::vector<std::string> &session_ids)
-{
-	const auto sessions = manager.GetSessions();
-	const auto lowered_filter = lowercase(filter);
-
-	GlobalSystemMediaTransportControlsSession fallback{nullptr};
-
-	for (const auto &session : sessions) {
-		const auto id = winrt::to_string(session.SourceAppUserModelId());
-		session_ids.push_back(id);
-
-		if (!fallback)
-			fallback = session;
-
-		if (!lowered_filter.empty() &&
-		    lowercase(id).find(lowered_filter) != std::string::npos)
-			return session;
-	}
-
-	if (lowered_filter.empty()) {
-		if (const auto current = manager.GetCurrentSession())
-			return current;
-	}
-
-	return lowered_filter.empty() ? fallback : nullptr;
-}
-
-MediaState unavailable_state(std::string message,
-			     std::vector<std::string> session_ids = {})
+MediaState unavailable_state(std::string message)
 {
 	MediaState state;
 	state.available = false;
 	state.error_message = std::move(message);
-	state.active_sessions = std::move(session_ids);
 	state.captured_at = std::chrono::steady_clock::now();
 	return state;
 }
 
-MediaState extract_wmp_com_state(WMPLib::IWMPPlayer4Ptr &player,
-				const char *backend_label,
-				std::vector<std::string> session_ids)
+/* ===================================================================
+ *  COM attach: find a running WMP instance via ROT / GetActiveObject
+ * =================================================================== */
+
+WMPLib::IWMPPlayer4Ptr attach_running_wmp()
 {
-	MediaState state;
+	CLSID clsid;
+	HRESULT hr = CLSIDFromProgID(L"WMPlayer.OCX", &clsid);
+	if (FAILED(hr))
+		return nullptr;
 
-	WMPLib::IWMPMediaPtr media = player->currentMedia;
-	if (!media)
-		return unavailable_state("WMP COM currentMedia unavailable",
-					 std::move(session_ids));
+	IUnknown *punk = nullptr;
+	hr = GetActiveObject(clsid, nullptr, &punk);
+	if (FAILED(hr) || !punk)
+		return nullptr;
 
-	const _bstr_t title = media->name;
-	const _bstr_t artist = media->getItemInfo(_bstr_t(L"Author"));
-	const _bstr_t composer = media->getItemInfo(_bstr_t(L"WM/Composer"));
-	const _bstr_t album = media->getItemInfo(_bstr_t(L"WM/AlbumTitle"));
-	const _bstr_t album_artist = media->getItemInfo(_bstr_t(L"WM/AlbumArtist"));
-	double duration = media->duration;
-	double position = player->controls->currentPosition;
+	WMPLib::IWMPPlayer4Ptr player;
+	hr = punk->QueryInterface(__uuidof(WMPLib::IWMPPlayer4),
+				  reinterpret_cast<void **>(&player));
+	punk->Release();
 
-	WMPLib::WMPPlayState playState = player->playState;
+	if (FAILED(hr))
+		return nullptr;
+
+	return player;
+}
+
+/* ===================================================================
+ *  Extract playlist from the running WMP instance
+ * =================================================================== */
+
+std::vector<PlaylistItem>
+extract_playlist(WMPLib::IWMPPlayer4Ptr &player, int &current_index,
+		 const _bstr_t &current_source_url)
+{
+	std::vector<PlaylistItem> items;
+	current_index = -1;
+
+	WMPLib::IWMPPlaylistPtr playlist;
+	try {
+		playlist = player->currentPlaylist;
+	} catch (const _com_error &) {
+		return items;
+	}
+
+	if (!playlist)
+		return items;
+
+	long count = 0;
+	try {
+		count = playlist->count;
+	} catch (const _com_error &) {
+		return items;
+	}
+
+	if (count <= 0)
+		return items;
+
+	items.reserve(static_cast<size_t>(count));
+
+	for (long i = 0; i < count; ++i) {
+		WMPLib::IWMPMediaPtr media;
+		try {
+			media = playlist->Item[i];
+		} catch (const _com_error &) {
+			continue;
+		}
+		if (!media)
+			continue;
+
+		PlaylistItem item;
+		item.index = static_cast<int>(i);
+
+		try {
+			item.title = bstr_to_utf8(media->name);
+		} catch (const _com_error &) {
+		}
+
+		try {
+			item.artist =
+				bstr_to_utf8(media->getItemInfo(_bstr_t(L"Author")));
+		} catch (const _com_error &) {
+		}
+
+		try {
+			item.album = bstr_to_utf8(
+				media->getItemInfo(_bstr_t(L"WM/AlbumTitle")));
+		} catch (const _com_error &) {
+		}
+
+		try {
+			item.duration_sec = media->duration;
+		} catch (const _com_error &) {
+		}
+
+		/* Determine current index by comparing source URLs */
+		if (current_index < 0) {
+			try {
+				_bstr_t item_url = media->sourceURL;
+				if (item_url.length() > 0 &&
+				    current_source_url.length() > 0 &&
+				    _wcsicmp(static_cast<const wchar_t *>(
+						     item_url),
+					     static_cast<const wchar_t *>(
+						     current_source_url)) ==
+					    0) {
+					current_index = static_cast<int>(i);
+				}
+			} catch (const _com_error &) {
+			}
+		}
+
+		items.push_back(std::move(item));
+	}
+
+	return items;
+}
+
+/* ===================================================================
+ *  Extract full WMP state (current track + playlist)
+ * =================================================================== */
+
+MediaState capture_wmp_com_state()
+{
+	auto player = attach_running_wmp();
+	if (!player)
+		return unavailable_state(
+			"Windows Media Player is not running or not accessible via ROT");
+
+	/* Check play state — only extract details for Playing/Paused */
+	WMPLib::WMPPlayState play_state;
+	try {
+		play_state = player->playState;
+	} catch (const _com_error &err) {
+		return unavailable_state(tchar_to_utf8(err.ErrorMessage()));
+	}
+
 	PlaybackStatus status = PlaybackStatus::unknown;
-	switch (playState) {
+	switch (play_state) {
 	case WMPLib::wmppsPlaying:
 		status = PlaybackStatus::playing;
 		break;
@@ -323,188 +234,113 @@ MediaState extract_wmp_com_state(WMPLib::IWMPPlayer4Ptr &player,
 	case WMPLib::wmppsStopped:
 		status = PlaybackStatus::stopped;
 		break;
+	case WMPLib::wmppsTransitioning:
+		status = PlaybackStatus::changing;
+		break;
 	default:
 		status = PlaybackStatus::opened;
 		break;
 	}
 
+	/* If WMP is not in a playable state, return minimal info */
+	if (status != PlaybackStatus::playing &&
+	    status != PlaybackStatus::paused) {
+		MediaState state;
+		state.available = true;
+		state.legacy_wmp_running = true;
+		state.backend = "WMP Legacy COM";
+		state.source_app_id = "wmplayer.exe";
+		state.playback_status = status;
+		state.captured_at = std::chrono::steady_clock::now();
+		return state;
+	}
+
+	/* Extract current media details */
+	WMPLib::IWMPMediaPtr media;
+	try {
+		media = player->currentMedia;
+	} catch (const _com_error &err) {
+		return unavailable_state(tchar_to_utf8(err.ErrorMessage()));
+	}
+
+	if (!media)
+		return unavailable_state("WMP COM: currentMedia is null");
+
+	MediaState state;
 	state.available = true;
-	state.limited_fallback = false;
 	state.legacy_wmp_running = true;
-	state.is_legacy_wmp_com = true;
-	state.backend = backend_label;
+	state.backend = "WMP Legacy COM";
 	state.source_app_id = "wmplayer.exe";
-	state.title = wide_to_utf8(static_cast<const wchar_t *>(title));
-	state.artist = wide_to_utf8(static_cast<const wchar_t *>(artist));
-	state.album = wide_to_utf8(static_cast<const wchar_t *>(album));
-	state.album_artist = wide_to_utf8(static_cast<const wchar_t *>(album_artist));
-	state.composer = wide_to_utf8(static_cast<const wchar_t *>(composer));
-	state.start_ms = 0;
-	state.end_ms = static_cast<int64_t>(duration * 1000.0);
-	state.position_ms = static_cast<int64_t>(position * 1000.0);
-	state.timeline_available = state.end_ms > 0;
 	state.playback_status = status;
-	state.active_sessions = std::move(session_ids);
-	state.captured_at = std::chrono::steady_clock::now();
-	return state;
-}
 
-MediaState capture_wmp_com_fallback(std::vector<std::string> session_ids)
-{
-	/* COM calls to WMP require an STA apartment.  The worker thread is
-	   already in a WinRT MTA, so we spin up a temporary STA thread for
-	   the COM work and join on it. */
-	MediaState result;
-	std::thread sta_thread([&result, ids = std::move(session_ids)]() mutable {
-		CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
-		try {
-			/* ----- Strategy 1: GetActiveObject (running WMP) ----- */
-			IUnknown *punk = nullptr;
-			CLSID clsid;
-			HRESULT hr = CLSIDFromProgID(L"WMPlayer.OCX", &clsid);
-			if (SUCCEEDED(hr))
-				hr = GetActiveObject(clsid, nullptr, &punk);
-
-			if (SUCCEEDED(hr) && punk) {
-				WMPLib::IWMPPlayer4Ptr player;
-				hr = punk->QueryInterface(__uuidof(WMPLib::IWMPPlayer4),
-							 reinterpret_cast<void **>(&player));
-				punk->Release();
-
-				if (SUCCEEDED(hr) && player) {
-					result = extract_wmp_com_state(
-						player, "WMP Legacy COM (ROT)",
-						std::move(ids));
-					CoUninitialize();
-					return;
-				}
-			}
-
-			/* ----- Strategy 2: CreateInstance (embedded WMP) ----- */
-			WMPLib::IWMPPlayer4Ptr player;
-			hr = player.CreateInstance(__uuidof(WMPLib::WindowsMediaPlayer));
-			if (SUCCEEDED(hr) && player) {
-				result = extract_wmp_com_state(
-					player, "WMP Legacy COM (embed)",
-					std::move(ids));
-				CoUninitialize();
-				return;
-			}
-
-			result = unavailable_state(
-				"Failed to connect to Windows Media Player via COM",
-				std::move(ids));
-		} catch (const _com_error &err) {
-			result = unavailable_state(tchar_to_utf8(err.ErrorMessage()),
-						   std::move(ids));
-		} catch (...) {
-			result = unavailable_state(
-				"Unknown error in WMP COM fallback",
-				std::move(ids));
-		}
-
-		CoUninitialize();
-	});
-
-	sta_thread.join();
-	return result;
-}
-
-MediaState capture_wmp_window_fallback(std::vector<std::string> session_ids)
-{
-	auto titles = find_wmp_window_titles();
-	if (titles.empty())
-		return unavailable_state("No matching SMTC media session",
-					 std::move(session_ids));
-
-	std::string media_title;
-	for (const auto &title : titles) {
-		media_title = media_title_from_wmp_window(title);
-		if (!media_title.empty())
-			break;
+	try {
+		state.title = bstr_to_utf8(media->name);
+	} catch (const _com_error &) {
 	}
 
-	MediaState state;
-	state.available = true;
-	state.limited_fallback = true;
-	state.legacy_wmp_running = true;
-	state.backend = "WMP window title";
-	state.source_app_id = "wmplayer.exe";
-	state.title = media_title.empty() ? "Windows Media Player Legacy"
-					  : media_title;
-	state.playback_status = PlaybackStatus::opened;
-	state.error_message =
-		"WMP Legacy did not publish an SMTC session; using window title fallback";
-	state.active_sessions = std::move(session_ids);
-	state.legacy_wmp_windows = std::move(titles);
-	state.captured_at = std::chrono::steady_clock::now();
-	return state;
-}
-
-MediaState capture_state(
-	const GlobalSystemMediaTransportControlsSessionManager &manager,
-	const std::string &filter, bool enable_wmp_window_fallback)
-{
-	std::vector<std::string> session_ids;
-	const auto session = pick_session(manager, filter, session_ids);
-
-	if (!session) {
-		if (enable_wmp_window_fallback && wmp_fallback_requested(filter)) {
-			auto com_state = capture_wmp_com_fallback(session_ids);
-			if (com_state.available)
-				return com_state;
-			return capture_wmp_window_fallback(std::move(session_ids));
-		}
-
-		return unavailable_state("No matching SMTC media session",
-					 std::move(session_ids));
+	try {
+		state.artist =
+			bstr_to_utf8(media->getItemInfo(_bstr_t(L"Author")));
+	} catch (const _com_error &) {
 	}
 
-	MediaState state;
-	state.available = true;
-	state.backend = "SMTC";
-	state.source_app_id = winrt::to_string(session.SourceAppUserModelId());
-	state.active_sessions = std::move(session_ids);
+	try {
+		state.album = bstr_to_utf8(
+			media->getItemInfo(_bstr_t(L"WM/AlbumTitle")));
+	} catch (const _com_error &) {
+	}
+
+	try {
+		state.album_artist = bstr_to_utf8(
+			media->getItemInfo(_bstr_t(L"WM/AlbumArtist")));
+	} catch (const _com_error &) {
+	}
+
+	try {
+		state.composer = bstr_to_utf8(
+			media->getItemInfo(_bstr_t(L"WM/Composer")));
+	} catch (const _com_error &) {
+	}
+
+	try {
+		double duration = media->duration;
+		state.end_ms = static_cast<int64_t>(duration * 1000.0);
+	} catch (const _com_error &) {
+	}
+
+	try {
+		double position = player->controls->currentPosition;
+		state.position_ms = static_cast<int64_t>(position * 1000.0);
+	} catch (const _com_error &) {
+	}
+
+	state.start_ms = 0;
+	state.timeline_available = state.end_ms > 0;
 	state.captured_at = std::chrono::steady_clock::now();
 
-	const auto props = session.TryGetMediaPropertiesAsync().get();
-	state.title = winrt::to_string(props.Title());
-	state.artist = winrt::to_string(props.Artist());
-	state.album = winrt::to_string(props.AlbumTitle());
-	state.album_artist = winrt::to_string(props.AlbumArtist());
-	state.subtitle = winrt::to_string(props.Subtitle());
+	/* Extract playlist */
+	_bstr_t current_source_url;
+	try {
+		current_source_url = media->sourceURL;
+	} catch (const _com_error &) {
+	}
 
-	const auto joined_genres = join_hstrings(props.Genres());
-	if (!joined_genres.empty())
-		state.genres.push_back(joined_genres);
-
-	const auto timeline = session.GetTimelineProperties();
-	state.start_ms = to_ms(timeline.StartTime());
-	state.end_ms = to_ms(timeline.EndTime());
-	state.min_seek_ms = to_ms(timeline.MinSeekTime());
-	state.max_seek_ms = to_ms(timeline.MaxSeekTime());
-	state.position_ms = to_ms(timeline.Position());
-	state.timeline_available =
-		state.end_ms > state.start_ms || state.position_ms > 0 ||
-		state.max_seek_ms > state.min_seek_ms;
-
-	const auto playback_info = session.GetPlaybackInfo();
-	state.playback_status =
-		to_playback_status(playback_info.PlaybackStatus());
-
-	if (const auto controls = playback_info.Controls()) {
-		state.can_play = controls.IsPlayEnabled();
-		state.can_pause = controls.IsPauseEnabled();
-		state.can_next = controls.IsNextEnabled();
-		state.can_previous = controls.IsPreviousEnabled();
-		state.can_seek = controls.IsPlaybackPositionEnabled();
+	try {
+		state.playlist = extract_playlist(
+			player, state.current_playlist_index,
+			current_source_url);
+	} catch (const _com_error &) {
+		/* Playlist extraction failed; state remains valid without it */
 	}
 
 	return state;
 }
 
 } // namespace
+
+/* ===================================================================
+ *  SmtcMonitor public interface
+ * =================================================================== */
 
 SmtcMonitor::~SmtcMonitor()
 {
@@ -540,14 +376,12 @@ void SmtcMonitor::stop()
 	started_ = false;
 }
 
-void SmtcMonitor::configure(std::string app_filter, uint32_t refresh_ms,
-			    bool enable_wmp_window_fallback)
+void SmtcMonitor::configure(std::string app_filter, uint32_t refresh_ms)
 {
 	{
 		std::lock_guard lock(mutex_);
 		app_filter_ = std::move(app_filter);
 		refresh_ms_ = std::clamp<uint32_t>(refresh_ms, 250, 5000);
-		enable_wmp_window_fallback_ = enable_wmp_window_fallback;
 	}
 
 	wake_.notify_all();
@@ -559,47 +393,36 @@ MediaState SmtcMonitor::snapshot() const
 	return state_;
 }
 
+/* ===================================================================
+ *  Worker thread: dedicated STA apartment for COM calls
+ * =================================================================== */
+
 void SmtcMonitor::run()
 {
-	winrt::init_apartment(winrt::apartment_type::multi_threaded);
-
-	GlobalSystemMediaTransportControlsSessionManager manager{nullptr};
+	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
 	for (;;) {
-		std::string filter;
 		uint32_t refresh_ms = 1000;
-		bool enable_wmp_window_fallback = true;
 
 		{
 			std::lock_guard lock(mutex_);
 			if (stop_requested_)
 				break;
-			filter = app_filter_;
 			refresh_ms = refresh_ms_;
-			enable_wmp_window_fallback = enable_wmp_window_fallback_;
 		}
 
 		MediaState next_state;
 
 		try {
-			if (!manager) {
-				manager =
-					GlobalSystemMediaTransportControlsSessionManager::
-						RequestAsync()
-							.get();
-			}
-
-			next_state = capture_state(manager, filter,
-						   enable_wmp_window_fallback);
-		} catch (const winrt::hresult_error &err) {
-			manager = nullptr;
-			next_state = unavailable_state(winrt::to_string(err.message()));
+			next_state = capture_wmp_com_state();
+		} catch (const _com_error &err) {
+			next_state =
+				unavailable_state(tchar_to_utf8(err.ErrorMessage()));
 		} catch (const std::exception &err) {
-			manager = nullptr;
 			next_state = unavailable_state(err.what());
 		} catch (...) {
-			manager = nullptr;
-			next_state = unavailable_state("Unknown SMTC error");
+			next_state =
+				unavailable_state("Unknown error in WMP COM polling");
 		}
 
 		{
@@ -614,8 +437,12 @@ void SmtcMonitor::run()
 			break;
 	}
 
-	winrt::uninit_apartment();
+	CoUninitialize();
 }
+
+/* ===================================================================
+ *  Playback status text helper
+ * =================================================================== */
 
 const char *playback_status_text(PlaybackStatus status)
 {

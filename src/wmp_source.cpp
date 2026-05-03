@@ -46,7 +46,6 @@ struct SourceContext {
 	std::string app_filter = "wmplayer";
 	std::string format = kDefaultFormat;
 	bool hide_when_empty = false;
-	bool enable_wmp_window_fallback = true;
 	int display_mode = 0;
 	bool show_composer = true;
 	uint32_t refresh_ms = 1000;
@@ -100,37 +99,6 @@ std::string format_time(int64_t ms)
 	return stream.str();
 }
 
-std::string join_strings(const std::vector<std::string> &values)
-{
-	std::ostringstream stream;
-	bool first = true;
-
-	for (const auto &value : values) {
-		if (value.empty())
-			continue;
-		if (!first)
-			stream << ", ";
-		first = false;
-		stream << value;
-	}
-
-	return stream.str();
-}
-
-int64_t playable_start(const MediaState &state)
-{
-	if (state.start_ms > 0)
-		return state.start_ms;
-	return state.min_seek_ms;
-}
-
-int64_t playable_end(const MediaState &state)
-{
-	if (state.end_ms > state.start_ms)
-		return state.end_ms;
-	return state.max_seek_ms;
-}
-
 int64_t current_position_ms(const MediaState &state)
 {
 	int64_t position = state.position_ms;
@@ -143,10 +111,8 @@ int64_t current_position_ms(const MediaState &state)
 				    .count();
 	}
 
-	const auto start = playable_start(state);
-	const auto end = playable_end(state);
-	if (end > start)
-		position = std::clamp(position, start, end);
+	if (state.end_ms > state.start_ms)
+		position = std::clamp(position, state.start_ms, state.end_ms);
 
 	return position;
 }
@@ -166,35 +132,44 @@ std::string progress_bar(double ratio, int width)
 	return bar;
 }
 
+std::string format_playlist_text(const MediaState &state)
+{
+	if (state.playlist.empty())
+		return {};
+
+	std::ostringstream out;
+	for (const auto &item : state.playlist) {
+		if (item.index == state.current_playlist_index)
+			out << "▶ ";
+		else
+			out << "   ";
+
+		out << (item.index + 1) << ". ";
+		out << (item.title.empty() ? "Unknown" : item.title);
+
+		if (!item.artist.empty())
+			out << " - " << item.artist;
+
+		out << "\n";
+	}
+
+	return out.str();
+}
+
 std::string render_text(const SourceContext &context, const MediaState &state)
 {
 	if (!state.available) {
 		if (context.hide_when_empty)
 			return {};
-
-		if (!state.active_sessions.empty()) {
-			std::string text =
-				"Waiting for matching SMTC media session\nSMTC sessions: " +
-				join_strings(state.active_sessions);
-
-			if (!state.legacy_wmp_windows.empty()) {
-				text += "\nWMP windows: " +
-					join_strings(state.legacy_wmp_windows);
-			}
-
-			return text;
-		}
-
 		return "Waiting for Windows Media Player";
 	}
 
-	const auto start = playable_start(state);
-	const auto end = playable_end(state);
-	const auto duration = end > start ? end - start : 0;
+	const auto duration =
+		state.end_ms > state.start_ms ? state.end_ms - state.start_ms : 0;
 	const auto absolute_position = current_position_ms(state);
 	const auto relative_position =
-		duration > 0 ? std::clamp(absolute_position - start, int64_t{0},
-					  duration)
+		duration > 0 ? std::clamp(absolute_position - state.start_ms,
+					  int64_t{0}, duration)
 			     : std::max<int64_t>(absolute_position, 0);
 	const auto remaining = duration > 0
 				       ? std::max<int64_t>(duration - relative_position,
@@ -215,7 +190,16 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 		ui << "💿 " << fallback(state.album, "Unknown album") << "\n";
 		if (context.show_composer && !state.composer.empty())
 			ui << "✍  " << state.composer << "\n";
-		ui << progress_bar(ratio, context.progress_width) << "  " << format_time(relative_position) << " / " << (duration > 0 ? format_time(duration) : "--:--");
+		ui << progress_bar(ratio, context.progress_width) << "  "
+		   << format_time(relative_position) << " / "
+		   << (duration > 0 ? format_time(duration) : "--:--");
+
+		if (!state.playlist.empty()) {
+			ui << "\n\n📋 Playlist ("
+			   << state.playlist.size() << " tracks):\n";
+			ui << format_playlist_text(state);
+		}
+
 		return ui.str();
 	}
 
@@ -225,8 +209,6 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	replace_all(output, "{album}", state.album);
 	replace_all(output, "{album_artist}", state.album_artist);
 	replace_all(output, "{composer}", state.composer);
-	replace_all(output, "{subtitle}", state.subtitle);
-	replace_all(output, "{genres}", join_strings(state.genres));
 	replace_all(output, "{backend}", state.backend);
 	replace_all(output, "{source_app_id}", state.source_app_id);
 	replace_all(output, "{status}",
@@ -241,10 +223,12 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	replace_all(output, "{progress_percent}", percent.str());
 	replace_all(output, "{progress_bar}",
 		    progress_bar(ratio, context.progress_width));
-	replace_all(output, "{sessions}", join_strings(state.active_sessions));
 	replace_all(output, "{diagnostic}", state.error_message);
-	replace_all(output, "{wmp_windows}",
-		    join_strings(state.legacy_wmp_windows));
+
+	std::ostringstream playlist_count;
+	playlist_count << state.playlist.size();
+	replace_all(output, "{playlist_count}", playlist_count.str());
+	replace_all(output, "{playlist}", format_playlist_text(state));
 
 	return output;
 }
@@ -283,12 +267,12 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 	if (context.json_output_path.empty())
 		return;
 
-	const auto start = playable_start(state);
-	const auto end = playable_end(state);
-	const auto duration = end > start ? end - start : 0;
+	const auto duration =
+		state.end_ms > state.start_ms ? state.end_ms - state.start_ms : 0;
 	const auto position = current_position_ms(state);
 	const auto relative_position =
-		duration > 0 ? std::clamp(position - start, int64_t{0}, duration)
+		duration > 0 ? std::clamp(position - state.start_ms, int64_t{0},
+					  duration)
 			     : std::max<int64_t>(position, 0);
 	const auto ratio = duration > 0
 				   ? static_cast<double>(relative_position) /
@@ -315,11 +299,34 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 	json << "  \"progress\": " << ratio << ",\n";
 	json << "  \"position_text\": \""
 	     << (state.timeline_available ? format_time(relative_position)
-					    : "--:--")
+					  : "--:--")
 	     << "\",\n";
 	json << "  \"duration_text\": \""
 	     << (duration > 0 ? format_time(duration) : "--:--")
-	     << "\"\n";
+	     << "\",\n";
+
+	/* Playlist array */
+	json << "  \"current_playlist_index\": " << state.current_playlist_index
+	     << ",\n";
+	json << "  \"playlist\": [\n";
+	for (size_t i = 0; i < state.playlist.size(); ++i) {
+		const auto &item = state.playlist[i];
+		json << "    {\n";
+		json << "      \"index\": " << item.index << ",\n";
+		json << "      \"title\": \"" << escape_json(item.title)
+		     << "\",\n";
+		json << "      \"artist\": \"" << escape_json(item.artist)
+		     << "\",\n";
+		json << "      \"album\": \"" << escape_json(item.album)
+		     << "\",\n";
+		json << "      \"duration_sec\": " << item.duration_sec
+		     << "\n";
+		json << "    }";
+		if (i + 1 < state.playlist.size())
+			json << ",";
+		json << "\n";
+	}
+	json << "  ]\n";
 	json << "}\n";
 
 	/* Atomic write: write to a temp file, then rename */
@@ -370,7 +377,7 @@ void update_text_source(SourceContext *context, const std::string &text)
 
 const char *source_get_name(void *)
 {
-	return "WMP Legacy Now Playing (SMTC)";
+	return "WMP Legacy Now Playing (COM)";
 }
 
 void source_get_defaults(obs_data_t *settings)
@@ -378,7 +385,6 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "app_filter", "wmplayer");
 	obs_data_set_default_string(settings, "format", kDefaultFormat);
 	obs_data_set_default_bool(settings, "hide_when_empty", false);
-	obs_data_set_default_bool(settings, "enable_wmp_window_fallback", true);
 	obs_data_set_default_int(settings, "refresh_ms", 1000);
 	obs_data_set_default_int(settings, "progress_width", 24);
 	obs_data_set_default_int(settings, "display_mode", 1);
@@ -409,8 +415,6 @@ obs_properties_t *source_get_properties(void *)
 	obs_properties_add_int_slider(props, "refresh_ms",
 				      "Refresh interval (ms)", 250, 5000,
 				      250);
-	obs_properties_add_bool(props, "enable_wmp_window_fallback",
-				"Enable WMP Legacy fallbacks (COM + window title)");
 	obs_properties_add_bool(props, "hide_when_empty",
 				"Hide when no media");
 	obs_properties_add_path(props, "json_output_path",
@@ -428,10 +432,6 @@ void source_update(void *data, obs_data_t *settings)
 	context->format = obs_data_get_string(settings, "format");
 	context->hide_when_empty =
 		obs_data_get_bool(settings, "hide_when_empty");
-	context->enable_wmp_window_fallback =
-		!obs_data_has_user_value(settings,
-					 "enable_wmp_window_fallback") ||
-		obs_data_get_bool(settings, "enable_wmp_window_fallback");
 	context->refresh_ms =
 		static_cast<uint32_t>(obs_data_get_int(settings, "refresh_ms"));
 	context->progress_width =
@@ -447,8 +447,7 @@ void source_update(void *data, obs_data_t *settings)
 	if (context->json_output_path.empty())
 		context->json_output_path = default_json_path();
 
-	context->monitor.configure(context->app_filter, context->refresh_ms,
-				   context->enable_wmp_window_fallback);
+	context->monitor.configure(context->app_filter, context->refresh_ms);
 	context->last_text.clear();
 }
 
