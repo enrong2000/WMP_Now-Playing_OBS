@@ -149,7 +149,9 @@ extract_playlist(WMPLib::IWMPPlayer4Ptr &player, int &current_index,
 	for (long i = 0; i < count; ++i) {
 		WMPLib::IWMPMediaPtr media;
 		try {
-			media = playlist->get_Item(i);
+			HRESULT hr = playlist->get_Item(i, &media);
+			if (FAILED(hr))
+				_com_issue_error(hr);
 		} catch (const _com_error &) {
 			continue;
 		}
