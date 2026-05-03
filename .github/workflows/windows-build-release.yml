@@ -119,6 +119,12 @@ jobs:
           $W32PthreadsDir = Join-Path $ObsBuildDir "deps\w32-pthreads"
           $LibobsConfig = Join-Path $LibobsDir "libobsConfig.cmake"
 
+          $ModulePaths = @(
+            (Join-Path $PWD ".github\cmake"),
+            (Join-Path $env:OBS_SOURCE_DIR "cmake\finders"),
+            (Join-Path $LibobsDir "finders")
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+
           $PrefixPaths = @($LibobsDir, $W32PthreadsDir)
           $CachePath = Join-Path $ObsBuildDir "CMakeCache.txt"
           $CachePrefix = Select-String `
@@ -148,7 +154,7 @@ jobs:
                 $PackageDirArgs[$Name] = $Value
                 $PrefixPaths += $Value
               }
-            }
+          }
 
           $SearchRoots = @(
             $ObsBuildDir,
@@ -163,6 +169,39 @@ jobs:
                 $_.Name -like "*Config.cmake" -or
                 $_.Name -like "*-config.cmake"
               }
+          }
+
+          $FindModules = @()
+          foreach ($ModulePath in $ModulePaths) {
+            $FindModules += Get-ChildItem -LiteralPath $ModulePath -File -Filter "Find*.cmake"
+          }
+
+          $SimdeHeader = $null
+          $SimdeSearchRoots = @(
+            (Join-Path $env:OBS_SOURCE_DIR ".deps"),
+            (Join-Path $env:OBS_SOURCE_DIR "libobs\util"),
+            (Join-Path $env:OBS_SOURCE_DIR "deps"),
+            $ObsBuildDir
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+
+          foreach ($Root in $SimdeSearchRoots) {
+            $SimdeHeader = Get-ChildItem `
+              -LiteralPath $Root `
+              -Recurse `
+              -File `
+              -Filter "simde-features.h" |
+              Where-Object { $_.Directory.Name -ieq "simde" } |
+              Select-Object -First 1
+
+            if ($SimdeHeader -ne $null) {
+              break
+            }
+          }
+
+          if ($SimdeHeader -ne $null) {
+            $SimdeIncludeDir = $SimdeHeader.Directory.Parent.FullName
+            $PackageDirArgs["SIMDe_INCLUDE_DIR"] = $SimdeIncludeDir
+            $PrefixPaths += $SimdeIncludeDir
           }
 
           $Dependencies = Select-String `
@@ -186,7 +225,16 @@ jobs:
               Select-Object -First 1
 
             if ($Config -eq $null) {
-              throw "Unable to locate CMake package config for OBS dependency '$Dependency'."
+              $Module = $FindModules |
+                Where-Object { $_.Name -ieq "Find${Dependency}.cmake" } |
+                Select-Object -First 1
+
+              if ($Module -ne $null) {
+                Write-Host "Using finder module for OBS dependency '$Dependency': $($Module.FullName)"
+                continue
+              }
+
+              throw "Unable to locate CMake package config or finder module for OBS dependency '$Dependency'."
             }
 
             $PackageDirArgs[$ArgName] = $Config.DirectoryName
@@ -201,7 +249,10 @@ jobs:
           Write-Host "Plugin CMAKE_PREFIX_PATH:"
           $PrefixPaths | ForEach-Object { Write-Host "  $_" }
 
-          Write-Host "Resolved OBS CMake package dirs:"
+          Write-Host "Plugin CMAKE_MODULE_PATH:"
+          $ModulePaths | ForEach-Object { Write-Host "  $_" }
+
+          Write-Host "Resolved OBS CMake variables:"
           $PackageDirArgs.GetEnumerator() | ForEach-Object {
             Write-Host "  $($_.Key)=$($_.Value)"
           }
@@ -211,7 +262,8 @@ jobs:
             "-B", "build",
             "-G", "Visual Studio 17 2022",
             "-A", "x64",
-            "-DCMAKE_PREFIX_PATH=$($PrefixPaths -join ';')"
+            "-DCMAKE_PREFIX_PATH=$($PrefixPaths -join ';')",
+            "-DCMAKE_MODULE_PATH=$($ModulePaths -join ';')"
           )
 
           $PackageDirArgs.GetEnumerator() | ForEach-Object {
