@@ -33,10 +33,12 @@ struct MediaState {
 	std::string artist;
 	std::string album;
 	std::string album_artist;
+	std::string composer;
 	std::string subtitle;
 	std::vector<std::string> genres;
 	std::vector<std::string> active_sessions;
 	std::vector<std::string> legacy_wmp_windows;
+	bool is_legacy_wmp_com = false;
 	PlaybackStatus playback_status = PlaybackStatus::unknown;
 	bool can_play = false;
 	bool can_pause = false;

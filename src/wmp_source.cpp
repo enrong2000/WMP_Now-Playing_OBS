@@ -27,6 +27,8 @@ struct SourceContext {
 	std::string format = kDefaultFormat;
 	bool hide_when_empty = false;
 	bool enable_wmp_window_fallback = true;
+	int display_mode = 0;
+	bool show_composer = true;
 	uint32_t refresh_ms = 1000;
 	int progress_width = 24;
 	float update_elapsed = 0.0f;
@@ -185,11 +187,23 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	std::ostringstream percent;
 	percent << static_cast<int>(std::llround(ratio * 100.0)) << '%';
 
+	if (context.display_mode == 1 && state.available) {
+		std::ostringstream ui;
+		ui << "♪  " << fallback(state.title, "Unknown title") << "\n";
+		ui << "👤 " << fallback(state.artist, "Unknown artist") << "\n";
+		ui << "💿 " << fallback(state.album, "Unknown album") << "\n";
+		if (context.show_composer && !state.composer.empty())
+			ui << "✍  " << state.composer << "\n";
+		ui << progress_bar(ratio, context.progress_width) << "  " << format_time(relative_position) << " / " << (duration > 0 ? format_time(duration) : "--:--");
+		return ui.str();
+	}
+
 	std::string output = context.format;
 	replace_all(output, "{title}", fallback(state.title, "Unknown title"));
 	replace_all(output, "{artist}", fallback(state.artist, "Unknown artist"));
 	replace_all(output, "{album}", state.album);
 	replace_all(output, "{album_artist}", state.album_artist);
+	replace_all(output, "{composer}", state.composer);
 	replace_all(output, "{subtitle}", state.subtitle);
 	replace_all(output, "{genres}", join_strings(state.genres));
 	replace_all(output, "{backend}", state.backend);
@@ -259,6 +273,8 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "enable_wmp_window_fallback", true);
 	obs_data_set_default_int(settings, "refresh_ms", 1000);
 	obs_data_set_default_int(settings, "progress_width", 24);
+	obs_data_set_default_int(settings, "display_mode", 1);
+	obs_data_set_default_bool(settings, "show_composer", true);
 }
 
 obs_properties_t *source_get_properties(void *)
@@ -267,15 +283,24 @@ obs_properties_t *source_get_properties(void *)
 
 	obs_properties_add_text(props, "app_filter", "App filter",
 				OBS_TEXT_DEFAULT);
+
+	obs_property_t *display_mode_list = obs_properties_add_list(
+		props, "display_mode", "Display mode",
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(display_mode_list, "Template Text", 0);
+	obs_property_list_add_int(display_mode_list, "UI Card", 1);
+
 	obs_properties_add_text(props, "format", "Format",
 				OBS_TEXT_MULTILINE);
 	obs_properties_add_int_slider(props, "progress_width",
 				      "Progress width", 4, 80, 1);
+	obs_properties_add_bool(props, "show_composer",
+				"Show composer in UI Card mode");
 	obs_properties_add_int_slider(props, "refresh_ms",
 				      "Refresh interval (ms)", 250, 5000,
 				      250);
 	obs_properties_add_bool(props, "enable_wmp_window_fallback",
-				"Use WMP Legacy window title fallback");
+				"Enable WMP Legacy fallbacks (COM + window title)");
 	obs_properties_add_bool(props, "hide_when_empty",
 				"Hide when no media");
 
@@ -298,6 +323,8 @@ void source_update(void *data, obs_data_t *settings)
 		static_cast<uint32_t>(obs_data_get_int(settings, "refresh_ms"));
 	context->progress_width =
 		static_cast<int>(obs_data_get_int(settings, "progress_width"));
+	context->display_mode = static_cast<int>(obs_data_get_int(settings, "display_mode"));
+	context->show_composer = obs_data_get_bool(settings, "show_composer");
 
 	if (context->format.empty())
 		context->format = kDefaultFormat;

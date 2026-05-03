@@ -11,7 +11,7 @@ Native OBS source plugin prototype for showing media metadata from Windows Media
 
 ## Current WMP Legacy limitation
 
-SMTC exposes media session metadata and timeline data only for applications that publish an SMTC session. Windows Media Player (Legacy) may not publish one; in that case this plugin can fall back to detecting the visible `wmplayer.exe` window title. The fallback is intentionally limited: it cannot read accurate playback progress, duration, or the real playlist. A complete WMP Legacy integration still requires a WMP-specific plug-in, in-process bridge, or another dedicated integration layer.
+SMTC exposes media session metadata and timeline data only for applications that publish an SMTC session. Windows Media Player (Legacy) may not publish one; in that case this plugin first tries WMP Legacy COM automation (`WindowsMediaPlayer` / `IWMPMedia`) to read current track metadata and progress. If COM data is unavailable, it falls back to detecting the visible `wmplayer.exe` window title. A complete WMP Legacy integration still requires a WMP-specific plug-in, in-process bridge, or another dedicated integration layer.
 
 ## Build
 
@@ -44,10 +44,12 @@ The workflow checks out the matching OBS Studio tag and builds `libobs` first, t
 ## Source Settings
 
 - `App filter`: substring used to select the SMTC session. The default `wmplayer` targets Windows Media Player when its SMTC app id includes that text. Clear it to use the current system media session.
-- `Format`: output template.
+- `Display mode`: choose between `UI Card` (structured panel) or `Template Text` (custom format string).
+- `Format`: output template (used in Template Text mode).
 - `Progress width`: character width of `{progress_bar}`.
+- `Show composer in UI Card mode`: display composer information when available.
 - `Refresh interval`: SMTC polling interval in milliseconds.
-- `Use WMP Legacy window title fallback`: when no matching SMTC session exists, try to detect a visible `wmplayer.exe` window and use its title.
+- `Enable WMP Legacy fallbacks (COM + window title)`: when no matching SMTC session exists, try WMP COM automation first, then fall back to detecting a visible `wmplayer.exe` window title.
 - `Hide when no media`: render nothing when no matching session is available.
 
 Available format tokens:
@@ -56,6 +58,7 @@ Available format tokens:
 - `{artist}`
 - `{album}`
 - `{album_artist}`
+- `{composer}`
 - `{subtitle}`
 - `{genres}`
 - `{backend}`
@@ -69,3 +72,13 @@ Available format tokens:
 - `{sessions}`
 - `{diagnostic}`
 - `{wmp_windows}`
+
+
+Additional metadata in legacy COM mode:
+- Composer (`WM/Composer`)
+- Album (`WM/AlbumTitle`)
+- Playback position and duration
+
+Display modes:
+- UI Card (default): card-style structured now-playing panel
+- Template Text: legacy token template mode

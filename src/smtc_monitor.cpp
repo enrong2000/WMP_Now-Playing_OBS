@@ -10,6 +10,9 @@
 #include <utility>
 
 #include <Windows.h>
+#include <comdef.h>
+
+#import "wmp.dll" rename_namespace("WMPLib") named_guids
 
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
@@ -256,6 +259,68 @@ MediaState unavailable_state(std::string message,
 	return state;
 }
 
+MediaState capture_wmp_com_fallback(std::vector<std::string> session_ids)
+{
+	MediaState state;
+	try {
+		WMPLib::IWMPPlayer4Ptr player;
+		HRESULT hr = player.CreateInstance(__uuidof(WMPLib::WindowsMediaPlayer));
+		if (FAILED(hr) || !player)
+			return unavailable_state("Failed to create Windows Media Player COM instance", std::move(session_ids));
+
+		WMPLib::IWMPMediaPtr media = player->currentMedia;
+		if (!media)
+			return unavailable_state("WMP COM currentMedia unavailable", std::move(session_ids));
+
+		const _bstr_t title = media->name;
+		const _bstr_t artist = media->getItemInfo(_bstr_t(L"Author"));
+		const _bstr_t composer = media->getItemInfo(_bstr_t(L"WM/Composer"));
+		const _bstr_t album = media->getItemInfo(_bstr_t(L"WM/AlbumTitle"));
+		const _bstr_t album_artist = media->getItemInfo(_bstr_t(L"WM/AlbumArtist"));
+		double duration = media->duration;
+		double position = player->controls->currentPosition;
+
+		WMPLib::WMPPlayState playState = player->playState;
+		PlaybackStatus status = PlaybackStatus::unknown;
+		switch (playState) {
+		case WMPLib::wmppsPlaying:
+			status = PlaybackStatus::playing;
+			break;
+		case WMPLib::wmppsPaused:
+			status = PlaybackStatus::paused;
+			break;
+		case WMPLib::wmppsStopped:
+			status = PlaybackStatus::stopped;
+			break;
+		default:
+			status = PlaybackStatus::opened;
+			break;
+		}
+
+		state.available = true;
+		state.limited_fallback = false;
+		state.legacy_wmp_running = true;
+		state.is_legacy_wmp_com = true;
+		state.backend = "WMP Legacy COM";
+		state.source_app_id = "wmplayer.exe";
+		state.title = wide_to_utf8(static_cast<const wchar_t *>(title));
+		state.artist = wide_to_utf8(static_cast<const wchar_t *>(artist));
+		state.album = wide_to_utf8(static_cast<const wchar_t *>(album));
+		state.album_artist = wide_to_utf8(static_cast<const wchar_t *>(album_artist));
+		state.composer = wide_to_utf8(static_cast<const wchar_t *>(composer));
+		state.start_ms = 0;
+		state.end_ms = static_cast<int64_t>(duration * 1000.0);
+		state.position_ms = static_cast<int64_t>(position * 1000.0);
+		state.timeline_available = state.end_ms > 0;
+		state.playback_status = status;
+		state.active_sessions = std::move(session_ids);
+		state.captured_at = std::chrono::steady_clock::now();
+		return state;
+	} catch (const _com_error &err) {
+		return unavailable_state(wide_to_utf8(err.ErrorMessage()), std::move(session_ids));
+	}
+}
+
 MediaState capture_wmp_window_fallback(std::vector<std::string> session_ids)
 {
 	auto titles = find_wmp_window_titles();
@@ -295,8 +360,12 @@ MediaState capture_state(
 	const auto session = pick_session(manager, filter, session_ids);
 
 	if (!session) {
-		if (enable_wmp_window_fallback && wmp_fallback_requested(filter))
+		if (enable_wmp_window_fallback && wmp_fallback_requested(filter)) {
+			auto com_state = capture_wmp_com_fallback(session_ids);
+			if (com_state.available)
+				return com_state;
 			return capture_wmp_window_fallback(std::move(session_ids));
+		}
 
 		return unavailable_state("No matching SMTC media session",
 					 std::move(session_ids));
