@@ -83,6 +83,38 @@ std::string wide_to_utf8(const std::wstring &value)
 	return converted;
 }
 
+std::string wide_to_utf8(const wchar_t *value)
+{
+	return value ? wide_to_utf8(std::wstring(value)) : std::string{};
+}
+
+std::string narrow_to_utf8(const char *value)
+{
+	if (!value || value[0] == '\0')
+		return {};
+
+	const int needed = MultiByteToWideChar(CP_ACP, 0, value, -1, nullptr, 0);
+	if (needed <= 0)
+		return {};
+
+	std::wstring converted(static_cast<size_t>(needed), L'\0');
+	MultiByteToWideChar(CP_ACP, 0, value, -1, converted.data(), needed);
+	if (!converted.empty() && converted.back() == L'\0')
+		converted.pop_back();
+
+	return wide_to_utf8(converted);
+}
+
+std::string tchar_to_utf8(const wchar_t *value)
+{
+	return wide_to_utf8(value);
+}
+
+std::string tchar_to_utf8(const char *value)
+{
+	return narrow_to_utf8(value);
+}
+
 std::wstring process_name_for_window(HWND window)
 {
 	DWORD process_id = 0;
@@ -317,7 +349,8 @@ MediaState capture_wmp_com_fallback(std::vector<std::string> session_ids)
 		state.captured_at = std::chrono::steady_clock::now();
 		return state;
 	} catch (const _com_error &err) {
-		return unavailable_state(wide_to_utf8(err.ErrorMessage()), std::move(session_ids));
+		return unavailable_state(tchar_to_utf8(err.ErrorMessage()),
+					 std::move(session_ids));
 	}
 }
 
