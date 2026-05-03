@@ -162,7 +162,7 @@ jobs:
                 $PackageDirArgs[$Name] = $Value
                 $PrefixPaths += $Value
               }
-          }
+            }
 
           $SearchRoots = @(
             $ObsBuildDir,

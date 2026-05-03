@@ -26,6 +26,7 @@ struct SourceContext {
 	std::string app_filter = "wmplayer";
 	std::string format = kDefaultFormat;
 	bool hide_when_empty = false;
+	bool enable_wmp_window_fallback = true;
 	uint32_t refresh_ms = 1000;
 	int progress_width = 24;
 	float update_elapsed = 0.0f;
@@ -148,9 +149,18 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 		if (context.hide_when_empty)
 			return {};
 
-		if (!state.active_sessions.empty())
-			return "Waiting for matching media session\nSessions: " +
-			       join_strings(state.active_sessions);
+		if (!state.active_sessions.empty()) {
+			std::string text =
+				"Waiting for matching SMTC media session\nSMTC sessions: " +
+				join_strings(state.active_sessions);
+
+			if (!state.legacy_wmp_windows.empty()) {
+				text += "\nWMP windows: " +
+					join_strings(state.legacy_wmp_windows);
+			}
+
+			return text;
+		}
 
 		return "Waiting for Windows Media Player";
 	}
@@ -182,10 +192,13 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	replace_all(output, "{album_artist}", state.album_artist);
 	replace_all(output, "{subtitle}", state.subtitle);
 	replace_all(output, "{genres}", join_strings(state.genres));
+	replace_all(output, "{backend}", state.backend);
 	replace_all(output, "{source_app_id}", state.source_app_id);
 	replace_all(output, "{status}",
 		    playback_status_text(state.playback_status));
-	replace_all(output, "{position}", format_time(relative_position));
+	replace_all(output, "{position}",
+		    state.timeline_available ? format_time(relative_position)
+					     : "--:--");
 	replace_all(output, "{duration}",
 		    duration > 0 ? format_time(duration) : "--:--");
 	replace_all(output, "{remaining}",
@@ -194,6 +207,9 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	replace_all(output, "{progress_bar}",
 		    progress_bar(ratio, context.progress_width));
 	replace_all(output, "{sessions}", join_strings(state.active_sessions));
+	replace_all(output, "{diagnostic}", state.error_message);
+	replace_all(output, "{wmp_windows}",
+		    join_strings(state.legacy_wmp_windows));
 
 	return output;
 }
@@ -240,6 +256,7 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "app_filter", "wmplayer");
 	obs_data_set_default_string(settings, "format", kDefaultFormat);
 	obs_data_set_default_bool(settings, "hide_when_empty", false);
+	obs_data_set_default_bool(settings, "enable_wmp_window_fallback", true);
 	obs_data_set_default_int(settings, "refresh_ms", 1000);
 	obs_data_set_default_int(settings, "progress_width", 24);
 }
@@ -257,6 +274,8 @@ obs_properties_t *source_get_properties(void *)
 	obs_properties_add_int_slider(props, "refresh_ms",
 				      "Refresh interval (ms)", 250, 5000,
 				      250);
+	obs_properties_add_bool(props, "enable_wmp_window_fallback",
+				"Use WMP Legacy window title fallback");
 	obs_properties_add_bool(props, "hide_when_empty",
 				"Hide when no media");
 
@@ -271,6 +290,10 @@ void source_update(void *data, obs_data_t *settings)
 	context->format = obs_data_get_string(settings, "format");
 	context->hide_when_empty =
 		obs_data_get_bool(settings, "hide_when_empty");
+	context->enable_wmp_window_fallback =
+		!obs_data_has_user_value(settings,
+					 "enable_wmp_window_fallback") ||
+		obs_data_get_bool(settings, "enable_wmp_window_fallback");
 	context->refresh_ms =
 		static_cast<uint32_t>(obs_data_get_int(settings, "refresh_ms"));
 	context->progress_width =
@@ -279,7 +302,8 @@ void source_update(void *data, obs_data_t *settings)
 	if (context->format.empty())
 		context->format = kDefaultFormat;
 
-	context->monitor.configure(context->app_filter, context->refresh_ms);
+	context->monitor.configure(context->app_filter, context->refresh_ms,
+				   context->enable_wmp_window_fallback);
 	context->last_text.clear();
 }
 

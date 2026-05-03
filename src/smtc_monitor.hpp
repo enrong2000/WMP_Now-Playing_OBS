@@ -23,7 +23,11 @@ enum class PlaybackStatus {
 
 struct MediaState {
 	bool available = false;
+	bool timeline_available = false;
+	bool limited_fallback = false;
+	bool legacy_wmp_running = false;
 	std::string error_message;
+	std::string backend;
 	std::string source_app_id;
 	std::string title;
 	std::string artist;
@@ -32,6 +36,7 @@ struct MediaState {
 	std::string subtitle;
 	std::vector<std::string> genres;
 	std::vector<std::string> active_sessions;
+	std::vector<std::string> legacy_wmp_windows;
 	PlaybackStatus playback_status = PlaybackStatus::unknown;
 	bool can_play = false;
 	bool can_pause = false;
@@ -57,7 +62,8 @@ public:
 
 	void start();
 	void stop();
-	void configure(std::string app_filter, uint32_t refresh_ms);
+	void configure(std::string app_filter, uint32_t refresh_ms,
+		       bool enable_wmp_window_fallback);
 	MediaState snapshot() const;
 
 private:
@@ -70,6 +76,7 @@ private:
 	bool started_ = false;
 	std::string app_filter_ = "wmplayer";
 	uint32_t refresh_ms_ = 1000;
+	bool enable_wmp_window_fallback_ = true;
 	MediaState state_;
 };
 

@@ -20,6 +20,7 @@ target_compile_definitions(obs-wmp-smtc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(obs-wmp-smtc
   PRIVATE
     OBS::libobs
+    user32
     windowsapp
 )
 

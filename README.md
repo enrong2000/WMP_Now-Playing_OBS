@@ -9,9 +9,9 @@ Native OBS source plugin prototype for showing media metadata from Windows Media
 - Displays title, artist, album, playback state, position, duration, and a text progress bar.
 - Uses OBS' bundled Windows text source internally, so the plugin does not implement font rendering itself.
 
-## Current SMTC limitation
+## Current WMP Legacy limitation
 
-SMTC exposes media session metadata and timeline data. It does not expose the real playlist or queue from Windows Media Player (Legacy). This prototype shows active SMTC sessions through the `{sessions}` token, but a real WMP playlist requires an additional integration layer such as a WMP-specific COM/extension path or UI Automation.
+SMTC exposes media session metadata and timeline data only for applications that publish an SMTC session. Windows Media Player (Legacy) may not publish one; in that case this plugin can fall back to detecting the visible `wmplayer.exe` window title. The fallback is intentionally limited: it cannot read accurate playback progress, duration, or the real playlist. A complete WMP Legacy integration still requires a WMP-specific plug-in, in-process bridge, or another dedicated integration layer.
 
 ## Build
 
@@ -47,6 +47,7 @@ The workflow checks out the matching OBS Studio tag and builds `libobs` first, t
 - `Format`: output template.
 - `Progress width`: character width of `{progress_bar}`.
 - `Refresh interval`: SMTC polling interval in milliseconds.
+- `Use WMP Legacy window title fallback`: when no matching SMTC session exists, try to detect a visible `wmplayer.exe` window and use its title.
 - `Hide when no media`: render nothing when no matching session is available.
 
 Available format tokens:
@@ -57,6 +58,7 @@ Available format tokens:
 - `{album_artist}`
 - `{subtitle}`
 - `{genres}`
+- `{backend}`
 - `{source_app_id}`
 - `{status}`
 - `{position}`
@@ -65,3 +67,5 @@ Available format tokens:
 - `{progress_percent}`
 - `{progress_bar}`
 - `{sessions}`
+- `{diagnostic}`
+- `{wmp_windows}`
