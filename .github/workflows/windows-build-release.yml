@@ -1,0 +1,217 @@
+name: Windows Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*.*.*"
+      - "*.*.*"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      obs_version:
+        description: "OBS Studio tag used to build libobs"
+        required: false
+        default: "32.1.2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLUGIN_NAME: obs-wmp-smtc
+  DEFAULT_OBS_VERSION: "32.1.2"
+
+jobs:
+  windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    defaults:
+      run:
+        shell: pwsh
+
+    outputs:
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      plugin_version: ${{ steps.metadata.outputs.plugin_version }}
+      obs_version: ${{ steps.metadata.outputs.obs_version }}
+
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@v4
+
+      - name: Resolve build metadata
+        id: metadata
+        env:
+          OBS_VERSION_INPUT: ${{ inputs.obs_version }}
+        run: |
+          $ObsVersion = $env:OBS_VERSION_INPUT
+          if ([string]::IsNullOrWhiteSpace($ObsVersion)) {
+            $ObsVersion = $env:DEFAULT_OBS_VERSION
+          }
+
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $PluginVersion = "${{ github.ref_name }}" -replace '^v', ''
+            $BuildConfig = "Release"
+          } else {
+            $ProjectVersion = Select-String `
+              -Path CMakeLists.txt `
+              -Pattern 'project\(obs-wmp-smtc VERSION ([0-9]+\.[0-9]+\.[0-9]+)' |
+              ForEach-Object { $_.Matches[0].Groups[1].Value } |
+              Select-Object -First 1
+            if ([string]::IsNullOrWhiteSpace($ProjectVersion)) {
+              $ProjectVersion = "0.0.0"
+            }
+
+            $ShortSha = "${{ github.sha }}".Substring(0, 9)
+            $PluginVersion = "$ProjectVersion+$ShortSha"
+            $BuildConfig = "RelWithDebInfo"
+          }
+
+          $ArtifactName = "$env:PLUGIN_NAME-$PluginVersion-windows-x64"
+
+          "obs_version=$ObsVersion" >> $env:GITHUB_OUTPUT
+          "plugin_version=$PluginVersion" >> $env:GITHUB_OUTPUT
+          "build_config=$BuildConfig" >> $env:GITHUB_OUTPUT
+          "artifact_name=$ArtifactName" >> $env:GITHUB_OUTPUT
+
+      - name: Check out OBS Studio
+        run: |
+          $ObsDir = Join-Path $env:RUNNER_TEMP "obs-studio"
+          git clone `
+            --branch "${{ steps.metadata.outputs.obs_version }}" `
+            --depth 1 `
+            --recurse-submodules `
+            --shallow-submodules `
+            https://github.com/obsproject/obs-studio.git `
+            $ObsDir
+          "OBS_SOURCE_DIR=$ObsDir" >> $env:GITHUB_ENV
+
+      - name: Configure OBS Studio libobs
+        working-directory: ${{ runner.temp }}\obs-studio
+        run: |
+          cmake --preset windows-x64 `
+            -DENABLE_BROWSER:BOOL=OFF `
+            -DENABLE_WEBRTC:BOOL=OFF `
+            -DENABLE_SCRIPTING:BOOL=OFF `
+            -DENABLE_VLC:BOOL=OFF `
+            -DENABLE_AJA:BOOL=OFF `
+            -DENABLE_DECKLINK:BOOL=OFF `
+            -DENABLE_VST:BOOL=OFF
+
+      - name: Build libobs
+        run: |
+          cmake --build "$env:OBS_SOURCE_DIR\build_x64" `
+            --config "${{ steps.metadata.outputs.build_config }}" `
+            --target libobs `
+            --parallel
+
+      - name: Configure plugin
+        run: |
+          $LibobsDir = Join-Path $env:OBS_SOURCE_DIR "build_x64\libobs"
+          cmake -S . -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -Dlibobs_DIR="$LibobsDir"
+
+      - name: Build plugin
+        run: |
+          cmake --build build `
+            --config "${{ steps.metadata.outputs.build_config }}" `
+            --parallel
+
+      - name: Install plugin layout
+        run: |
+          $InstallRoot = Join-Path $PWD "package\${{ steps.metadata.outputs.artifact_name }}"
+          cmake --install build `
+            --config "${{ steps.metadata.outputs.build_config }}" `
+            --prefix "$InstallRoot"
+          "INSTALL_ROOT=$InstallRoot" >> $env:GITHUB_ENV
+
+      - name: Package plugin
+        run: |
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+
+          $PackageZip = Join-Path $PWD "release\${{ steps.metadata.outputs.artifact_name }}.zip"
+          Compress-Archive `
+            -Path "$env:INSTALL_ROOT\*" `
+            -DestinationPath $PackageZip `
+            -Force
+
+          $Pdb = Get-ChildItem -Path build -Recurse -Filter "$env:PLUGIN_NAME.pdb" |
+            Select-Object -First 1
+          if ($Pdb -ne $null) {
+            $SymbolsRoot = Join-Path $PWD "package\${{ steps.metadata.outputs.artifact_name }}-symbols"
+            New-Item -ItemType Directory -Path $SymbolsRoot -Force | Out-Null
+            Copy-Item -LiteralPath $Pdb.FullName -Destination $SymbolsRoot
+
+            $SymbolsZip = Join-Path $PWD "release\${{ steps.metadata.outputs.artifact_name }}-symbols.zip"
+            Compress-Archive `
+              -Path "$SymbolsRoot\*" `
+              -DestinationPath $SymbolsZip `
+              -Force
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: release/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: windows
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.windows.outputs.artifact_name }}
+          path: artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          shopt -s globstar nullglob
+          files=(artifacts/**/*.zip)
+
+          if ((${#files[@]} == 0)); then
+            echo "No release artifacts found." >&2
+            exit 1
+          fi
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "${files[@]}" --clobber
+            exit 0
+          fi
+
+          args=(
+            release create "$TAG_NAME"
+            "${files[@]}"
+            --title "$TAG_NAME"
+            --generate-notes
+          )
+
+          if [[ "$TAG_NAME" =~ (alpha|beta|rc) ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh "${args[@]}"
