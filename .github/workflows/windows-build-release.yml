@@ -114,6 +114,11 @@ jobs:
 
       - name: Configure plugin
         run: |
+          function ConvertTo-CMakePath {
+            param([Parameter(Mandatory = $true)][string] $Path)
+            return ([System.IO.Path]::GetFullPath($Path) -replace '\\', '/')
+          }
+
           $ObsBuildDir = Join-Path $env:OBS_SOURCE_DIR "build_x64"
           $LibobsDir = Join-Path $ObsBuildDir "libobs"
           $W32PthreadsDir = Join-Path $ObsBuildDir "deps\w32-pthreads"
@@ -124,6 +129,9 @@ jobs:
             (Join-Path $env:OBS_SOURCE_DIR "cmake\finders"),
             (Join-Path $LibobsDir "finders")
           ) | Where-Object { Test-Path -LiteralPath $_ }
+          $ModulePaths = $ModulePaths |
+            ForEach-Object { ConvertTo-CMakePath $_ } |
+            Select-Object -Unique
 
           $PrefixPaths = @($LibobsDir, $W32PthreadsDir)
           $CachePath = Join-Path $ObsBuildDir "CMakeCache.txt"
@@ -243,8 +251,19 @@ jobs:
 
           $PrefixPaths = $PrefixPaths |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            ForEach-Object { [System.IO.Path]::GetFullPath($_) } |
+            ForEach-Object { ConvertTo-CMakePath $_ } |
             Select-Object -Unique
+
+          $NormalizedPackageDirArgs = [ordered]@{}
+          $PackageDirArgs.GetEnumerator() | ForEach-Object {
+            $Name = $_.Key
+            $Value = $_.Value
+            if (-not [string]::IsNullOrWhiteSpace($Value)) {
+              $Value = ConvertTo-CMakePath $Value
+            }
+            $NormalizedPackageDirArgs[$Name] = $Value
+          }
+          $PackageDirArgs = $NormalizedPackageDirArgs
 
           Write-Host "Plugin CMAKE_PREFIX_PATH:"
           $PrefixPaths | ForEach-Object { Write-Host "  $_" }
