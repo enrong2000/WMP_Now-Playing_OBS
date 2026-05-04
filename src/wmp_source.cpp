@@ -486,6 +486,39 @@ void source_update(void *data, obs_data_t *settings)
 	context->last_text.clear();
 }
 
+void write_overlay_config(const std::string &json_path)
+{
+	if (json_path.empty())
+		return;
+
+	std::string json_content = "{\n"
+		"  \"jsonPath\": \"" + escape_json(json_path) + "\"\n"
+		"}\n";
+
+	/* 1. Write to the OBS plugin config directory (always writable) */
+	char *config_dir = obs_module_config_path("");
+	if (config_dir) {
+		std::filesystem::path dir(config_dir);
+		bfree(config_dir);
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		std::ofstream cfg(dir / "overlay-config.json",
+				  std::ios::trunc | std::ios::binary);
+		if (cfg)
+			cfg << json_content;
+	}
+
+	/* 2. Write to the overlay data directory (may fail if read-only) */
+	char *data_path = obs_module_file("overlay/config.json");
+	if (data_path) {
+		std::ofstream cfg(data_path,
+				  std::ios::trunc | std::ios::binary);
+		if (cfg)
+			cfg << json_content;
+		bfree(data_path);
+	}
+}
+
 void *source_create(obs_data_t *settings, obs_source_t *source)
 {
 	auto *context = new SourceContext();
@@ -493,6 +526,7 @@ void *source_create(obs_data_t *settings, obs_source_t *source)
 	context->text_source = create_text_source();
 
 	source_update(context, settings);
+	write_overlay_config(context->json_output_path);
 	context->monitor.start();
 
 	return context;

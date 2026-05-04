@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(libobs REQUIRED CONFIG)
 
+# ---- OBS Plugin (DLL) ----
 add_library(obs-wmp-legacy MODULE
   src/plugin-main.cpp
   src/wmp_monitor.cpp
@@ -21,16 +22,24 @@ target_link_libraries(obs-wmp-legacy
   PRIVATE
     OBS::libobs
     user32
-    ole32
-    oleaut32
-    comsuppw
+    shell32
 )
 
 set_target_properties(obs-wmp-legacy PROPERTIES
   PREFIX ""
 )
 
+# ---- WMP Bridge helper (standalone exe for reliable COM access) ----
+add_executable(wmp_bridge src/wmp_bridge.cpp)
+target_compile_definitions(wmp_bridge PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(wmp_bridge PRIVATE user32 ole32 oleaut32 comsuppw)
+
+# ---- Install rules ----
 install(TARGETS obs-wmp-legacy
   RUNTIME DESTINATION obs-plugins/64bit
   LIBRARY DESTINATION obs-plugins/64bit
+)
+
+install(TARGETS wmp_bridge
+  RUNTIME DESTINATION obs-plugins/64bit
 )

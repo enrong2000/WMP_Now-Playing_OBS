@@ -112,6 +112,20 @@ if (Test-Path $dllSrc) {
     Write-Warn "Build the plugin first, then re-run this script."
 }
 
+# Bridge helper exe (wmp_bridge.exe)
+$bridgeSrc = Join-Path $scriptRoot "build\RelWithDebInfo\wmp_bridge.exe"
+if (-not (Test-Path $bridgeSrc)) { $bridgeSrc = Join-Path $scriptRoot "build\Release\wmp_bridge.exe" }
+if (-not (Test-Path $bridgeSrc)) { $bridgeSrc = Join-Path $scriptRoot "build\Debug\wmp_bridge.exe" }
+if (-not (Test-Path $bridgeSrc)) { $bridgeSrc = Join-Path $scriptRoot "obs-plugins\64bit\wmp_bridge.exe" }
+
+if (Test-Path $bridgeSrc) {
+    Write-Step "Copying bridge helper..."
+    Copy-Item $bridgeSrc -Destination $pluginDir -Force
+    Write-Ok "wmp_bridge.exe installed"
+} else {
+    Write-Warn "wmp_bridge.exe not found. Plugin will not function without it."
+}
+
 # Overlay files
 $overlaySrc = Join-Path $scriptRoot "overlay"
 # Also check release zip layout

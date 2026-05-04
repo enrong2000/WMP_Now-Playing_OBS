@@ -60,7 +60,6 @@
     const CONFIG = {
       pollIntervalMs: 500,
       idleAfterMs: 4500,
-      defaultJsonPath: '',
     };
 
     const state = {
@@ -88,6 +87,8 @@
       queueList: document.getElementById('queue-list'),
       queueCount: document.getElementById('queue-count'),
     };
+
+    /* ---- URL helpers ---- */
 
     function isObsAbsoluteOrigin() {
       return window.location.protocol === 'http:' &&
@@ -121,8 +122,93 @@
       return `${url}${glue}t=${Date.now()}`;
     }
 
+    /* ---- JSON discovery ---- */
+
+    async function probeJsonUrl(candidatePath) {
+      const url = toBrowserUrl(candidatePath);
+      if (!url) return '';
+      try {
+        const r = await fetch(withCacheBust(url), { cache: 'no-store' });
+        if (r.ok) {
+          const data = await r.json();
+          if (typeof data === 'object' && 'available' in data) return url;
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    async function discoverJsonInObs() {
+      /* When running inside OBS browser (http://absolute/...) without
+         a config.json, try to find the now-playing.json by probing
+         the OBS plugin-config sidecar written by the C++ plugin, or
+         by probing well-known APPDATA paths. */
+      if (!isObsAbsoluteOrigin()) return '';
+
+      const pathMatch = window.location.pathname.match(/^\/([A-Za-z]:)\//);
+      const drive = pathMatch ? pathMatch[1] : 'C:';
+      const jsonRelPath = 'AppData/Roaming/obs-wmp-legacy/now-playing.json';
+      const pluginCfgRel = 'AppData/Roaming/obs-studio/plugin_config/obs-wmp-legacy/overlay-config.json';
+
+      /* 1. Check localStorage cache */
+      const cached = localStorage.getItem('obs_wmp_json_url');
+      if (cached) {
+        const ok = await probeJsonUrl(cached);
+        if (ok) return ok;
+        localStorage.removeItem('obs_wmp_json_url');
+      }
+
+      /* 2. Extract username candidates from URL / referrer */
+      const candidates = new Set();
+      try {
+        const loc = decodeURIComponent(window.location.pathname);
+        const m = loc.match(/\/([A-Za-z]:)\/Users\/([^/]+)\//i);
+        if (m) candidates.add(m[2]);
+      } catch (e) {}
+      try {
+        if (document.referrer) {
+          const m2 = decodeURIComponent(document.referrer).match(
+            /\/([A-Za-z]:)\/Users\/([^/]+)\//i
+          );
+          if (m2) candidates.add(m2[2]);
+        }
+      } catch (e) {}
+
+      /* 3. Probe each candidate username for the JSON file */
+      for (const name of candidates) {
+        const path = `${drive}/Users/${name}/${jsonRelPath}`;
+        const url = await probeJsonUrl(path);
+        if (url) {
+          localStorage.setItem('obs_wmp_json_url', path);
+          return url;
+        }
+      }
+
+      /* 4. Try the plugin-config sidecar for each candidate */
+      for (const name of candidates) {
+        const cfgPath = `${drive}/Users/${name}/${pluginCfgRel}`;
+        const cfgUrl = toBrowserUrl(cfgPath);
+        if (!cfgUrl) continue;
+        try {
+          const r = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
+          if (r.ok) {
+            const cfg = await r.json();
+            const jp = cfg.jsonUrl || cfg.jsonPath || '';
+            if (jp) {
+              const url = toBrowserUrl(jp);
+              localStorage.setItem('obs_wmp_json_url', jp);
+              return url;
+            }
+          }
+        } catch (e) {}
+      }
+
+      return '';
+    }
+
     async function loadOverlayConfig() {
+      /* Priority: ?json= param > config.json > ?appdata= param > auto-discover */
       const params = new URLSearchParams(window.location.search);
+
       const jsonParam = params.get('json');
       if (jsonParam) return toBrowserUrl(jsonParam);
 
@@ -132,7 +218,8 @@
         });
         if (response.ok) {
           const config = await response.json();
-          return toBrowserUrl(config.jsonUrl || config.jsonPath || '');
+          const url = toBrowserUrl(config.jsonUrl || config.jsonPath || '');
+          if (url) return url;
         }
       } catch (error) {}
 
@@ -141,8 +228,10 @@
         return toBrowserUrl(`${appdata.replace(/\\/g, '/')}/obs-wmp-legacy/now-playing.json`);
       }
 
-      return toBrowserUrl(CONFIG.defaultJsonPath);
+      return await discoverJsonInObs();
     }
+
+    /* ---- UI rendering ---- */
 
     async function fetchData() {
       if (!state.jsonUrl) return null;

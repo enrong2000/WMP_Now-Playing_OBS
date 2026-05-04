@@ -305,11 +305,17 @@ jobs:
             --prefix "$InstallRoot"
           "INSTALL_ROOT=$InstallRoot" >> $env:GITHUB_ENV
 
-      - name: Copy overlay and installer into package
+      - name: Copy overlay, locale, and installer into package
         run: |
-          $OverlayDst = Join-Path $env:INSTALL_ROOT "data\obs-plugins\$env:PLUGIN_NAME\overlay"
+          $DataDst = Join-Path $env:INSTALL_ROOT "data\obs-plugins\$env:PLUGIN_NAME"
+          $OverlayDst = Join-Path $DataDst "overlay"
+          $LocaleDst = Join-Path $DataDst "locale"
           New-Item -ItemType Directory -Path $OverlayDst -Force | Out-Null
+          New-Item -ItemType Directory -Path $LocaleDst -Force | Out-Null
           Copy-Item -Path "overlay\*" -Destination $OverlayDst -Recurse -Force
+          if (Test-Path "data\locale") {
+            Copy-Item -Path "data\locale\*" -Destination $LocaleDst -Recurse -Force
+          }
           Copy-Item -Path "install.ps1" -Destination $env:INSTALL_ROOT -Force
 
       - name: Package plugin

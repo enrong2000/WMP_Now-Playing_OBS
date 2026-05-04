@@ -11,16 +11,19 @@ OBS Studio source plugin that displays now-playing metadata from **Windows Media
 - Reads title, artist, album, album artist, composer, playback state, position, duration, and the full playlist.
 - Renders a text display using OBS' bundled Windows text source.
 - **Writes real-time media state to a JSON file**, enabling a beautiful HTML/CSS overlay loaded via OBS Browser Source.
-- Includes a **Now-Playing overlay** with glassmorphism design, animated vinyl disc, EQ visualizer bars, and a glowing gradient progress bar.
+- Includes a **Now-Playing overlay** with glassmorphism design, animated EQ visualizer bars, and a glowing gradient progress bar.
 
 ## How It Works
 
-Windows Media Player (Legacy) does not register itself in the Running Object Table (ROT), so `GetActiveObject` cannot find it. Instead, this plugin uses the `IWMPRemoteMediaServices` approach:
+Windows Media Player (Legacy) does not register itself in the Running Object Table (ROT), so `GetActiveObject` cannot find it. This plugin uses the `IWMPRemoteMediaServices` approach via a **subprocess architecture**:
 
-1. Creates an in-process WMP OCX instance via `CoCreateInstance`.
-2. Sets a client site implementing `IWMPRemoteMediaServices` with service type `"Remote"`.
-3. The OCX attaches to the already-running `wmplayer.exe` process and shares its playback state.
-4. A background worker thread polls the COM interface at a configurable interval and exposes the state to OBS.
+1. A background worker thread in the plugin spawns `wmp_bridge.exe` — a small standalone helper — once per poll cycle.
+2. The bridge process creates an in-process WMP OCX via `CoCreateInstance` in a clean COM environment.
+3. It sets a client site implementing `IWMPRemoteMediaServices` with service type `"Remote"`, causing the OCX to attach to the already-running `wmplayer.exe` process.
+4. The bridge extracts all media metadata and outputs a single JSON object to stdout, then exits.
+5. The plugin reads the JSON output via a pipe and updates the OBS source.
+
+> **Why a subprocess?** Running WMP COM automation in-process inside OBS is unreliable due to COM apartment conflicts with OBS's threading model and its embedded Chromium (CEF) browser. The subprocess approach guarantees a clean COM environment on every poll.
 
 ## Installation
 
@@ -32,9 +35,13 @@ Windows Media Player (Legacy) does not register itself in the Running Object Tab
    obs-plugins/
      64bit/
        obs-wmp-legacy.dll
+       wmp_bridge.exe
    data/
      obs-plugins/
        obs-wmp-legacy/
+         locale/
+           en-US.ini
+           zh-CN.ini
          overlay/
            index.html
            style.css
@@ -49,14 +56,15 @@ Windows Media Player (Legacy) does not register itself in the Running Object Tab
 
 The installer will:
 - Auto-detect your OBS Studio installation (or prompt for the path)
-- Copy `obs-wmp-legacy.dll` to `<OBS>/obs-plugins/64bit/`
+- Copy `obs-wmp-legacy.dll` and `wmp_bridge.exe` to `<OBS>/obs-plugins/64bit/`
 - Copy overlay files to `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`
 - Create the JSON output directory at `%APPDATA%/obs-wmp-legacy/`
 
 ### Manual Installation
 
-1. Copy `obs-wmp-legacy.dll` to `<OBS>/obs-plugins/64bit/`
-2. Copy the `overlay/` folder to `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`
+1. Copy `obs-wmp-legacy.dll` and `wmp_bridge.exe` to `<OBS>/obs-plugins/64bit/`
+2. Copy `data/locale/` to `<OBS>/data/obs-plugins/obs-wmp-legacy/locale/`
+3. Copy the `overlay/` folder to `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`
 
 ## Now-Playing Overlay Setup
 
@@ -98,7 +106,7 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 - Pushes and pull requests build a Windows x64 artifact.
 - Pushing a version tag such as `v0.3.0` or `0.3.0` creates or updates a GitHub Release and uploads the plugin zip.
 - Manual runs support an `obs_version` input. The default is OBS Studio `32.1.2`.
-- The release artifact includes the overlay files and installer script.
+- The release artifact includes the overlay files, locale files, bridge helper, and installer script.
 
 ## Source Settings
 

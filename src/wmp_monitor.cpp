@@ -3,21 +3,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cwctype>
-#include <exception>
-#include <iomanip>
-#include <sstream>
+#include <filesystem>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include <Windows.h>
-#include <ObjBase.h>
-#include <OleCtl.h>
 #include <TlHelp32.h>
-#include <comdef.h>
 
-#import "wmp.dll" rename_namespace("WMPLib") named_guids
+#include <obs-module.h>
 
 namespace obs_wmp {
 namespace {
@@ -44,40 +38,6 @@ std::string wide_to_utf8(const std::wstring &value)
 	return converted;
 }
 
-std::string wide_to_utf8(const wchar_t *value)
-{
-	return value ? wide_to_utf8(std::wstring(value)) : std::string{};
-}
-
-std::string bstr_to_utf8(const _bstr_t &bs)
-{
-	const wchar_t *raw = static_cast<const wchar_t *>(bs);
-	return raw ? wide_to_utf8(raw) : std::string{};
-}
-
-std::string tchar_to_utf8(const wchar_t *value)
-{
-	return wide_to_utf8(value);
-}
-
-std::string tchar_to_utf8(const char *value)
-{
-	if (!value || value[0] == '\0')
-		return {};
-
-	const int needed =
-		MultiByteToWideChar(CP_ACP, 0, value, -1, nullptr, 0);
-	if (needed <= 0)
-		return {};
-
-	std::wstring converted(static_cast<size_t>(needed), L'\0');
-	MultiByteToWideChar(CP_ACP, 0, value, -1, converted.data(), needed);
-	if (!converted.empty() && converted.back() == L'\0')
-		converted.pop_back();
-
-	return wide_to_utf8(converted);
-}
-
 std::wstring utf8_to_wide(std::string_view value)
 {
 	if (value.empty())
@@ -94,9 +54,10 @@ std::wstring utf8_to_wide(std::string_view value)
 		return converted;
 	}
 
+	/* Fallback: try the system ANSI codepage */
 	const int fallback_needed = MultiByteToWideChar(
-		CP_ACP, 0, value.data(), static_cast<int>(value.size()), nullptr,
-		0);
+		CP_ACP, 0, value.data(), static_cast<int>(value.size()),
+		nullptr, 0);
 	if (fallback_needed <= 0)
 		return {};
 
@@ -116,31 +77,24 @@ std::wstring lowercase(std::wstring value)
 	return value;
 }
 
-std::string hresult_hex(HRESULT hr)
-{
-	std::ostringstream out;
-	out << "0x" << std::hex << std::uppercase
-	    << static_cast<unsigned long>(static_cast<uint32_t>(hr));
-	return out.str();
-}
-
-bool filter_matches_wmp(std::wstring filter)
-{
-	filter = lowercase(std::move(filter));
-	return filter.empty() || filter.find(L"wmp") != std::wstring::npos ||
-	       filter.find(L"wmplayer") != std::wstring::npos ||
-	       filter.find(L"windows media") != std::wstring::npos;
-}
+/* ===================================================================
+ *  Process detection — check if wmplayer.exe is running
+ * =================================================================== */
 
 bool matching_wmp_process_is_running(const std::string &app_filter)
 {
 	std::wstring filter = lowercase(utf8_to_wide(app_filter));
-	if (filter_matches_wmp(filter))
+
+	/* Normalize common filter values to wmplayer */
+	if (filter.empty() || filter.find(L"wmp") != std::wstring::npos ||
+	    filter.find(L"wmplayer") != std::wstring::npos ||
+	    filter.find(L"windows media") != std::wstring::npos) {
 		filter = L"wmplayer";
+	}
 
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE)
-		return true;
+		return true; /* assume running if we can't check */
 
 	PROCESSENTRY32W entry = {};
 	entry.dwSize = sizeof(entry);
@@ -149,8 +103,7 @@ bool matching_wmp_process_is_running(const std::string &app_filter)
 	if (Process32FirstW(snapshot, &entry)) {
 		do {
 			const std::wstring exe = lowercase(entry.szExeFile);
-			if (filter.empty() ||
-			    exe.find(filter) != std::wstring::npos) {
+			if (exe.find(filter) != std::wstring::npos) {
 				found = true;
 				break;
 			}
@@ -162,10 +115,11 @@ bool matching_wmp_process_is_running(const std::string &app_filter)
 }
 
 /* ===================================================================
- *  Helper: unavailable state factory
+ *  Helper: build an unavailable MediaState
  * =================================================================== */
 
-MediaState unavailable_state(std::string message, bool legacy_wmp_running = false)
+MediaState unavailable_state(std::string message,
+			     bool legacy_wmp_running = false)
 {
 	MediaState state;
 	state.available = false;
@@ -178,369 +132,280 @@ MediaState unavailable_state(std::string message, bool legacy_wmp_running = fals
 }
 
 /* ===================================================================
- *  IWMPRemoteMediaServices host site
+ *  Subprocess bridge — spawn wmp_bridge.exe and read JSON stdout
  *
- *  Windows Media Player (Legacy) does NOT register itself in the
- *  Running Object Table, so GetActiveObject always fails.
- *  The correct approach is to CoCreateInstance an in-process WMP
- *  OCX and set a client site implementing IWMPRemoteMediaServices
- *  with service type "Remote". This causes the OCX to attach to
- *  the already-running WMP process and share its playback state.
+ *  The in-process WMP COM OCX approach is unreliable inside OBS due
+ *  to COM apartment conflicts with OBS's threading model.  Instead
+ *  we spawn wmp_bridge.exe (a small standalone helper) that performs
+ *  the COM work in a clean process and outputs JSON to stdout.
  * =================================================================== */
 
-class RemoteHostSite final : public IOleClientSite,
-			     public IServiceProvider,
-			     public WMPLib::IWMPRemoteMediaServices {
-public:
-	/* IUnknown */
-	ULONG __stdcall AddRef() override
-	{
-		return InterlockedIncrement(&refs_);
-	}
-
-	ULONG __stdcall Release() override
-	{
-		const ULONG refs = InterlockedDecrement(&refs_);
-		if (refs == 0)
-			delete this;
-		return refs;
-	}
-
-	HRESULT __stdcall QueryInterface(REFIID riid, void **out) override
-	{
-		if (!out)
-			return E_POINTER;
-		*out = nullptr;
-		if (riid == IID_IUnknown || riid == IID_IOleClientSite)
-			*out = static_cast<IOleClientSite *>(this);
-		else if (riid == IID_IServiceProvider)
-			*out = static_cast<IServiceProvider *>(this);
-		else if (riid == __uuidof(WMPLib::IWMPRemoteMediaServices))
-			*out = static_cast<WMPLib::IWMPRemoteMediaServices *>(
-				this);
-		else
-			return E_NOINTERFACE;
-		AddRef();
-		return S_OK;
-	}
-
-	/* IOleClientSite */
-	HRESULT __stdcall SaveObject() override { return E_NOTIMPL; }
-	HRESULT __stdcall GetMoniker(DWORD, DWORD, IMoniker **) override
-	{
-		return E_NOTIMPL;
-	}
-	HRESULT __stdcall GetContainer(IOleContainer **container) override
-	{
-		if (container)
-			*container = nullptr;
-		return E_NOINTERFACE;
-	}
-	HRESULT __stdcall ShowObject() override { return S_OK; }
-	HRESULT __stdcall OnShowWindow(BOOL) override { return S_OK; }
-	HRESULT __stdcall RequestNewObjectLayout() override
-	{
-		return E_NOTIMPL;
-	}
-
-	/* IServiceProvider */
-	HRESULT __stdcall QueryService(REFGUID service, REFIID riid,
-				       void **out) override
-	{
-		if (!out)
-			return E_POINTER;
-		*out = nullptr;
-		if (service == __uuidof(WMPLib::IWMPRemoteMediaServices) ||
-		    riid == __uuidof(WMPLib::IWMPRemoteMediaServices))
-			return QueryInterface(riid, out);
-		return E_NOINTERFACE;
-	}
-
-	/* IWMPRemoteMediaServices */
-	HRESULT __stdcall raw_GetServiceType(BSTR *type) override
-	{
-		if (!type)
-			return E_POINTER;
-		*type = SysAllocString(L"Remote");
-		return *type ? S_OK : E_OUTOFMEMORY;
-	}
-
-	HRESULT __stdcall raw_GetApplicationName(BSTR *name) override
-	{
-		if (!name)
-			return E_POINTER;
-		*name = SysAllocString(L"OBS WMP Legacy Now-Playing");
-		return *name ? S_OK : E_OUTOFMEMORY;
-	}
-
-	HRESULT __stdcall raw_GetScriptableObject(BSTR *name,
-						  IDispatch **dispatch) override
-	{
-		if (name)
-			*name = nullptr;
-		if (dispatch)
-			*dispatch = nullptr;
-		return E_NOTIMPL;
-	}
-
-	HRESULT __stdcall raw_GetCustomUIMode(BSTR *file) override
-	{
-		if (file)
-			*file = nullptr;
-		return E_NOTIMPL;
-	}
-
-private:
-	volatile LONG refs_ = 1;
-};
-
-/* ===================================================================
- *  Persistent remote connection context
+/**
+ * Locate the wmp_bridge.exe helper binary.
  *
- *  We keep the OLE object and player pointer alive across polls
- *  to avoid re-creating the COM connection on every tick.
- *  The connection is re-established if the player becomes invalid
- *  or if WMP is restarted.
- * =================================================================== */
-
-struct WmpConnection {
-	IOleObject *ole_object = nullptr;
-	WMPLib::IWMPPlayer4Ptr player;
-	bool remote = false;
-
-	bool is_valid() const
-	{
-		if (!player || !ole_object)
-			return false;
-		/* Probe the connection with a lightweight call */
-		try {
-			WMPLib::WMPPlayState ps;
-			HRESULT hr = player->get_playState(&ps);
-			return SUCCEEDED(hr);
-		} catch (...) {
-			return false;
-		}
-	}
-
-	void close()
-	{
-		player = nullptr;
-		remote = false;
-		if (ole_object) {
-			ole_object->Close(OLECLOSE_NOSAVE);
-			ole_object->Release();
-			ole_object = nullptr;
-		}
-	}
-};
-
-static WmpConnection open_remote_connection()
+ * Search order:
+ *   1. Beside the plugin DLL (obs-plugins/64bit/wmp_bridge.exe)
+ *   2. In the plugin data directory (via obs_module_file)
+ */
+static std::string find_bridge_exe()
 {
-	WmpConnection conn;
-
-	auto *site = new RemoteHostSite();
-	IOleObject *ole = nullptr;
-	HRESULT hr = CoCreateInstance(__uuidof(WMPLib::WindowsMediaPlayer),
-				     nullptr, CLSCTX_INPROC_SERVER,
-				     IID_PPV_ARGS(&ole));
-	if (FAILED(hr) || !ole) {
-		site->Release();
-		return conn;
+	/* 1. Look beside the plugin DLL itself */
+	HMODULE hmod = nullptr;
+	if (GetModuleHandleExW(
+		    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+			    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		    reinterpret_cast<LPCWSTR>(&find_bridge_exe), &hmod)) {
+		wchar_t dll_path[MAX_PATH];
+		if (GetModuleFileNameW(hmod, dll_path, MAX_PATH)) {
+			std::filesystem::path candidate =
+				std::filesystem::path(dll_path).parent_path() /
+				"wmp_bridge.exe";
+			std::error_code ec;
+			if (std::filesystem::exists(candidate, ec))
+				return candidate.string();
+		}
 	}
 
-	hr = ole->SetClientSite(site);
-	if (FAILED(hr)) {
-		ole->Release();
-		site->Release();
-		return conn;
+	/* 2. Look in the plugin data directory (obs_module_file) */
+	char *module_path = obs_module_file("wmp_bridge.exe");
+	if (module_path) {
+		std::filesystem::path p(module_path);
+		bfree(module_path);
+		std::error_code ec;
+		p = std::filesystem::absolute(p, ec);
+		if (!ec && std::filesystem::exists(p, ec))
+			return p.string();
 	}
 
-	ole->SetHostNames(L"OBS WMP Legacy Now-Playing", nullptr);
-	OleSetContainedObject(ole, TRUE);
-	OleRun(ole);
+	return {};
+}
 
-	WMPLib::IWMPPlayer4Ptr player;
-	hr = ole->QueryInterface(__uuidof(WMPLib::IWMPPlayer4),
-				 reinterpret_cast<void **>(&player));
-	if (FAILED(hr) || !player) {
-		ole->Close(OLECLOSE_NOSAVE);
-		ole->Release();
-		site->Release();
-		return conn;
+/**
+ * Spawn the bridge process and capture its stdout output.
+ * Returns the raw JSON string, or empty on failure.
+ */
+static std::string run_bridge_process(const std::string &exe_path)
+{
+	SECURITY_ATTRIBUTES sa = {};
+	sa.nLength = sizeof(sa);
+	sa.bInheritHandle = TRUE;
+
+	HANDLE read_pipe = nullptr, write_pipe = nullptr;
+	if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0))
+		return {};
+	SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+
+	STARTUPINFOW si = {};
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+	si.hStdOutput = write_pipe;
+	si.hStdError = write_pipe;
+	si.hStdInput = nullptr;
+	si.wShowWindow = SW_HIDE;
+
+	PROCESS_INFORMATION pi = {};
+
+	std::wstring wpath = utf8_to_wide(exe_path);
+	BOOL ok = CreateProcessW(wpath.c_str(), nullptr, nullptr, nullptr,
+				 TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
+				 &pi);
+
+	/* Close the write end in our process so ReadFile can detect EOF */
+	CloseHandle(write_pipe);
+
+	if (!ok) {
+		CloseHandle(read_pipe);
+		return {};
 	}
 
-	/* Some WMP builds report isRemote=false even when metadata calls work. */
-	VARIANT_BOOL remote = VARIANT_FALSE;
-	const HRESULT remote_hr = player->get_isRemote(&remote);
-	conn.ole_object = ole;
-	conn.player = player;
-	conn.remote = SUCCEEDED(remote_hr) && remote == VARIANT_TRUE;
-	/* site ref is held by the OLE object */
-	return conn;
+	/* Read stdout with a 5-second timeout */
+	std::string output;
+	output.reserve(8192);
+	char buf[4096];
+	const ULONGLONG deadline = GetTickCount64() + 5000;
+
+	for (;;) {
+		if (GetTickCount64() >= deadline)
+			break;
+
+		/* If the process has exited, drain remaining output */
+		if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
+			DWORD bytes = 0;
+			while (ReadFile(read_pipe, buf, sizeof(buf), &bytes,
+					nullptr) &&
+			       bytes > 0) {
+				output.append(buf, bytes);
+			}
+			break;
+		}
+
+		DWORD avail = 0;
+		if (PeekNamedPipe(read_pipe, nullptr, 0, nullptr, &avail,
+				  nullptr) &&
+		    avail > 0) {
+			DWORD bytes = 0;
+			DWORD to_read = static_cast<DWORD>(
+				(std::min<size_t>)(avail, sizeof(buf)));
+			if (ReadFile(read_pipe, buf, to_read, &bytes,
+				     nullptr) &&
+			    bytes > 0) {
+				output.append(buf, bytes);
+			}
+		} else {
+			Sleep(10);
+		}
+	}
+
+	/* Kill the process if it hasn't exited yet */
+	if (WaitForSingleObject(pi.hProcess, 0) != WAIT_OBJECT_0) {
+		TerminateProcess(pi.hProcess, 1);
+		WaitForSingleObject(pi.hProcess, 1000);
+	}
+
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+	CloseHandle(read_pipe);
+
+	return output;
 }
 
 /* ===================================================================
- *  Extract playlist from the running WMP instance
+ *  Minimal JSON parsers — no external dependency required
  * =================================================================== */
 
-std::vector<PlaylistItem>
-extract_playlist(WMPLib::IWMPPlayer4Ptr &player, int &current_index,
-		 const _bstr_t &current_source_url)
+static std::string json_string_value(const std::string &json,
+				     const std::string &key)
 {
-	std::vector<PlaylistItem> items;
-	current_index = -1;
-
-	WMPLib::IWMPPlaylistPtr playlist;
-	try {
-		playlist = player->currentPlaylist;
-	} catch (const _com_error &) {
-		return items;
-	}
-
-	if (!playlist)
-		return items;
-
-	long count = 0;
-	try {
-		count = playlist->count;
-	} catch (const _com_error &) {
-		return items;
-	}
-
-	if (count <= 0)
-		return items;
-
-	items.reserve(static_cast<size_t>(count));
-
-	for (long i = 0; i < count; ++i) {
-		WMPLib::IWMPMediaPtr media;
-		try {
-			HRESULT hr = playlist->get_Item(i, &media);
-			if (FAILED(hr))
-				_com_issue_error(hr);
-		} catch (const _com_error &) {
-			continue;
-		}
-		if (!media)
-			continue;
-
-		PlaylistItem item;
-		item.index = static_cast<int>(i);
-
-		try {
-			item.title = bstr_to_utf8(media->name);
-		} catch (const _com_error &) {
-		}
-
-		try {
-			item.artist =
-				bstr_to_utf8(media->getItemInfo(_bstr_t(L"Author")));
-		} catch (const _com_error &) {
-		}
-
-		try {
-			item.album = bstr_to_utf8(
-				media->getItemInfo(_bstr_t(L"WM/AlbumTitle")));
-		} catch (const _com_error &) {
-		}
-
-		try {
-			item.duration_sec = media->duration;
-		} catch (const _com_error &) {
-		}
-
-		/* Determine current index by comparing source URLs */
-		if (current_index < 0) {
-			try {
-				_bstr_t item_url = media->sourceURL;
-				if (item_url.length() > 0 &&
-				    current_source_url.length() > 0 &&
-				    _wcsicmp(static_cast<const wchar_t *>(
-						     item_url),
-					     static_cast<const wchar_t *>(
-						     current_source_url)) ==
-					    0) {
-					current_index = static_cast<int>(i);
-				}
-			} catch (const _com_error &) {
+	std::string search = "\"" + key + "\":\"";
+	auto pos = json.find(search);
+	if (pos == std::string::npos)
+		return {};
+	pos += search.size();
+	std::string result;
+	for (size_t i = pos; i < json.size(); ++i) {
+		if (json[i] == '"' && (i == pos || json[i - 1] != '\\'))
+			break;
+		if (json[i] == '\\' && i + 1 < json.size()) {
+			char next = json[i + 1];
+			if (next == '"' || next == '\\') {
+				result += next;
+				++i;
+				continue;
+			}
+			if (next == 'n') {
+				result += '\n';
+				++i;
+				continue;
 			}
 		}
-
-		items.push_back(std::move(item));
+		result += json[i];
 	}
+	return result;
+}
 
+static int64_t json_int_value(const std::string &json, const std::string &key)
+{
+	std::string search = "\"" + key + "\":";
+	auto pos = json.find(search);
+	if (pos == std::string::npos)
+		return 0;
+	pos += search.size();
+	while (pos < json.size() && json[pos] == ' ')
+		++pos;
+	return std::strtoll(json.c_str() + pos, nullptr, 10);
+}
+
+static double json_double_value(const std::string &json,
+				const std::string &key)
+{
+	std::string search = "\"" + key + "\":";
+	auto pos = json.find(search);
+	if (pos == std::string::npos)
+		return 0.0;
+	pos += search.size();
+	while (pos < json.size() && json[pos] == ' ')
+		++pos;
+	return std::strtod(json.c_str() + pos, nullptr);
+}
+
+static bool json_bool_value(const std::string &json, const std::string &key)
+{
+	std::string search = "\"" + key + "\":";
+	auto pos = json.find(search);
+	if (pos == std::string::npos)
+		return false;
+	pos += search.size();
+	while (pos < json.size() && json[pos] == ' ')
+		++pos;
+	return pos < json.size() && json[pos] == 't';
+}
+
+static std::vector<PlaylistItem> parse_playlist_json(const std::string &json)
+{
+	std::vector<PlaylistItem> items;
+	auto start = json.find("\"playlist\":[");
+	if (start == std::string::npos)
+		return items;
+	start += 12; /* skip past "playlist":[ */
+
+	size_t pos = start;
+	auto list_end = json.find(']', start);
+	while (pos < json.size() &&
+	       (list_end == std::string::npos || pos < list_end)) {
+		auto obj_start = json.find('{', pos);
+		if (obj_start == std::string::npos)
+			break;
+		if (list_end != std::string::npos && obj_start > list_end)
+			break;
+		auto obj_end = json.find('}', obj_start);
+		if (obj_end == std::string::npos)
+			break;
+
+		std::string obj =
+			json.substr(obj_start, obj_end - obj_start + 1);
+
+		PlaylistItem item;
+		item.index = static_cast<int>(json_int_value(obj, "index"));
+		item.title = json_string_value(obj, "title");
+		item.artist = json_string_value(obj, "artist");
+		item.album = json_string_value(obj, "album");
+		item.duration_sec = json_double_value(obj, "duration_sec");
+		items.push_back(std::move(item));
+
+		pos = obj_end + 1;
+	}
 	return items;
 }
 
 /* ===================================================================
- *  Extract full WMP state (current track + playlist)
+ *  Build MediaState from bridge JSON output
  * =================================================================== */
 
-MediaState capture_wmp_com_state(WmpConnection &conn,
-				 const std::string &app_filter)
+MediaState capture_via_bridge(const std::string &bridge_exe,
+			      const std::string &app_filter)
 {
-	const bool process_running = matching_wmp_process_is_running(app_filter);
-	if (!process_running) {
-		conn.close();
+	if (!matching_wmp_process_is_running(app_filter))
 		return unavailable_state(
 			"Windows Media Player (Legacy) is not running");
-	}
 
-	/* Ensure we have a valid connection */
-	if (!conn.is_valid()) {
-		conn.close();
-		conn = open_remote_connection();
-		if (!conn.player)
-			return unavailable_state(
-				"Windows Media Player (Legacy) is running, but the WMP COM bridge is not accessible",
-				true);
-	}
+	if (bridge_exe.empty())
+		return unavailable_state(
+			"wmp_bridge.exe not found in plugin directory", true);
 
-	auto &player = conn.player;
+	std::string json = run_bridge_process(bridge_exe);
+	if (json.empty())
+		return unavailable_state(
+			"wmp_bridge.exe failed to produce output", true);
 
-	/* Check play state */
-	WMPLib::WMPPlayState play_state;
-	try {
-		play_state = player->playState;
-	} catch (const _com_error &err) {
-		/* Connection went stale; force reconnect next poll. */
-		conn.close();
-		return unavailable_state(tchar_to_utf8(err.ErrorMessage()), true);
-	}
+	std::string error = json_string_value(json, "error");
+	if (!error.empty())
+		return unavailable_state("Bridge: " + error, true);
 
-	PlaybackStatus status = PlaybackStatus::unknown;
-	switch (play_state) {
-	case WMPLib::wmppsPlaying:
-		status = PlaybackStatus::playing;
-		break;
-	case WMPLib::wmppsPaused:
-		status = PlaybackStatus::paused;
-		break;
-	case WMPLib::wmppsStopped:
-		status = PlaybackStatus::stopped;
-		break;
-	case WMPLib::wmppsTransitioning:
-		status = PlaybackStatus::changing;
-		break;
-	default:
-		status = PlaybackStatus::opened;
-		break;
-	}
-
-	/* Extract current media details */
-	WMPLib::IWMPMediaPtr media;
-	try {
-		media = player->currentMedia;
-	} catch (const _com_error &err) {
-		conn.close();
-		return unavailable_state(tchar_to_utf8(err.ErrorMessage()), true);
-	}
-
-	if (!media) {
-		if (!conn.remote)
-			conn.close();
-		return unavailable_state("WMP is running but no media is loaded",
-					 true);
+	bool available = json_bool_value(json, "available");
+	if (!available) {
+		std::string diag = json_string_value(json, "diagnostic");
+		return unavailable_state(
+			diag.empty() ? "WMP reported no media" : diag, true);
 	}
 
 	MediaState state;
@@ -548,67 +413,36 @@ MediaState capture_wmp_com_state(WmpConnection &conn,
 	state.legacy_wmp_running = true;
 	state.backend = "WMP Legacy COM";
 	state.source_app_id = "wmplayer.exe";
-	state.playback_status = status;
 
-	try {
-		state.title = bstr_to_utf8(media->name);
-	} catch (const _com_error &) {
-	}
+	state.title = json_string_value(json, "title");
+	state.artist = json_string_value(json, "artist");
+	state.album = json_string_value(json, "album");
+	state.album_artist = json_string_value(json, "album_artist");
+	state.composer = json_string_value(json, "composer");
 
-	try {
-		state.artist =
-			bstr_to_utf8(media->getItemInfo(_bstr_t(L"Author")));
-	} catch (const _com_error &) {
-	}
+	std::string status = json_string_value(json, "status");
+	if (status == "Playing")
+		state.playback_status = PlaybackStatus::playing;
+	else if (status == "Paused")
+		state.playback_status = PlaybackStatus::paused;
+	else if (status == "Stopped")
+		state.playback_status = PlaybackStatus::stopped;
+	else if (status == "Changing")
+		state.playback_status = PlaybackStatus::changing;
+	else if (status == "Opened")
+		state.playback_status = PlaybackStatus::opened;
+	else
+		state.playback_status = PlaybackStatus::unknown;
 
-	try {
-		state.album = bstr_to_utf8(
-			media->getItemInfo(_bstr_t(L"WM/AlbumTitle")));
-	} catch (const _com_error &) {
-	}
-
-	try {
-		state.album_artist = bstr_to_utf8(
-			media->getItemInfo(_bstr_t(L"WM/AlbumArtist")));
-	} catch (const _com_error &) {
-	}
-
-	try {
-		state.composer = bstr_to_utf8(
-			media->getItemInfo(_bstr_t(L"WM/Composer")));
-	} catch (const _com_error &) {
-	}
-
-	try {
-		double duration = media->duration;
-		state.end_ms = static_cast<int64_t>(duration * 1000.0);
-	} catch (const _com_error &) {
-	}
-
-	try {
-		double position = player->controls->currentPosition;
-		state.position_ms = static_cast<int64_t>(position * 1000.0);
-	} catch (const _com_error &) {
-	}
-
+	state.position_ms = json_int_value(json, "position_ms");
+	state.end_ms = json_int_value(json, "duration_ms");
 	state.start_ms = 0;
 	state.timeline_available = state.end_ms > 0;
 	state.captured_at = std::chrono::steady_clock::now();
 
-	/* Extract playlist */
-	_bstr_t current_source_url;
-	try {
-		current_source_url = media->sourceURL;
-	} catch (const _com_error &) {
-	}
-
-	try {
-		state.playlist = extract_playlist(
-			player, state.current_playlist_index,
-			current_source_url);
-	} catch (const _com_error &) {
-		/* Playlist extraction failed; state remains valid without it */
-	}
+	state.current_playlist_index =
+		static_cast<int>(json_int_value(json, "current_playlist_index"));
+	state.playlist = parse_playlist_json(json);
 
 	return state;
 }
@@ -660,23 +494,21 @@ void WmpMonitor::stop()
 
 	if (stop_event_)
 		SetEvent(static_cast<HANDLE>(stop_event_));
-	if (wake_event_)
-		SetEvent(static_cast<HANDLE>(wake_event_));
 
 	if (worker_.joinable())
 		worker_.join();
 
-	std::lock_guard lock(mutex_);
-	started_ = false;
+	{
+		std::lock_guard lock(mutex_);
+		started_ = false;
+	}
 }
 
 void WmpMonitor::configure(std::string app_filter, uint32_t refresh_ms)
 {
-	{
-		std::lock_guard lock(mutex_);
-		app_filter_ = std::move(app_filter);
-		refresh_ms_ = std::clamp<uint32_t>(refresh_ms, 250, 5000);
-	}
+	std::lock_guard lock(mutex_);
+	app_filter_ = std::move(app_filter);
+	refresh_ms_ = refresh_ms;
 
 	if (wake_event_)
 		SetEvent(static_cast<HANDLE>(wake_event_));
@@ -689,22 +521,20 @@ MediaState WmpMonitor::snapshot() const
 }
 
 /* ===================================================================
- *  Worker thread: dedicated STA apartment for COM calls
+ *  Worker thread — spawns wmp_bridge.exe each poll cycle
  * =================================================================== */
 
 void WmpMonitor::run()
 {
-	/* OleInitialize is needed instead of CoInitializeEx because we
-	   use OLE embedding interfaces (IOleClientSite, OleRun, etc.) */
-	const HRESULT ole_hr = OleInitialize(nullptr);
-	if (FAILED(ole_hr)) {
-		std::lock_guard lock(mutex_);
-		state_ = unavailable_state("OLE initialization failed: " +
-					   hresult_hex(ole_hr));
-		return;
+	const std::string bridge_exe = find_bridge_exe();
+	if (bridge_exe.empty()) {
+		blog(LOG_WARNING,
+		     "[obs-wmp-legacy] wmp_bridge.exe not found — "
+		     "media state will not be available");
+	} else {
+		blog(LOG_INFO, "[obs-wmp-legacy] using bridge: %s",
+		     bridge_exe.c_str());
 	}
-
-	WmpConnection conn;
 
 	for (;;) {
 		std::string app_filter;
@@ -721,18 +551,13 @@ void WmpMonitor::run()
 		MediaState next_state;
 
 		try {
-			next_state = capture_wmp_com_state(conn, app_filter);
-		} catch (const _com_error &err) {
 			next_state =
-				unavailable_state(tchar_to_utf8(err.ErrorMessage()));
-			conn.close();
+				capture_via_bridge(bridge_exe, app_filter);
 		} catch (const std::exception &err) {
 			next_state = unavailable_state(err.what());
-			conn.close();
 		} catch (...) {
-			next_state =
-				unavailable_state("Unknown error in WMP COM polling");
-			conn.close();
+			next_state = unavailable_state(
+				"Unknown error in WMP bridge");
 		}
 
 		{
@@ -743,39 +568,13 @@ void WmpMonitor::run()
 		if (stop_requested_)
 			break;
 
-		HANDLE events[2] = { static_cast<HANDLE>(stop_event_), static_cast<HANDLE>(wake_event_) };
-		DWORD timeout = refresh_ms;
-		ULONGLONG start_tick = GetTickCount64();
-
-		while (true) {
-			DWORD wait_res = MsgWaitForMultipleObjects(2, events, FALSE, timeout, QS_ALLINPUT);
-			if (wait_res == WAIT_OBJECT_0) {
-				break;
-			} else if (wait_res == WAIT_OBJECT_0 + 1) {
-				break;
-			} else if (wait_res == WAIT_OBJECT_0 + 2) {
-				MSG msg;
-				while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-					TranslateMessage(&msg);
-					DispatchMessage(&msg);
-				}
-			} else if (wait_res == WAIT_TIMEOUT) {
-				break;
-			}
-
-			ULONGLONG elapsed = GetTickCount64() - start_tick;
-			if (elapsed >= refresh_ms)
-				break;
-			timeout = refresh_ms - static_cast<DWORD>(elapsed);
-		}
-
-		if (WaitForSingleObject(events[0], 0) == WAIT_OBJECT_0)
+		HANDLE events[2] = {static_cast<HANDLE>(stop_event_),
+				    static_cast<HANDLE>(wake_event_)};
+		DWORD wait = WaitForMultipleObjects(2, events, FALSE,
+						    refresh_ms);
+		if (wait == WAIT_OBJECT_0)
 			break;
 	}
-
-	/* Clean up the persistent connection before COM teardown */
-	conn.close();
-	OleUninitialize();
 }
 
 /* ===================================================================
