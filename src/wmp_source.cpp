@@ -139,11 +139,7 @@ std::string format_playlist_text(const MediaState &state)
 
 	std::ostringstream out;
 	for (const auto &item : state.playlist) {
-		if (item.index == state.current_playlist_index)
-			out << "▶ ";
-		else
-			out << "   ";
-
+		out << (item.index == state.current_playlist_index ? "> " : "  ");
 		out << (item.index + 1) << ". ";
 		out << (item.title.empty() ? "Unknown" : item.title);
 
@@ -154,6 +150,37 @@ std::string format_playlist_text(const MediaState &state)
 	}
 
 	return out.str();
+}
+
+std::string render_ui_card_text(const SourceContext &context,
+				const MediaState &state, int64_t position,
+				int64_t duration, double ratio,
+				const std::string &percent)
+{
+	std::ostringstream ui;
+	ui << "NOW PLAYING  " << playback_status_text(state.playback_status)
+	   << "\n";
+	ui << fallback(state.title, "Unknown title") << "\n";
+	ui << fallback(state.artist, "Unknown artist");
+
+	if (!state.album.empty())
+		ui << "  |  " << state.album;
+	ui << "\n";
+
+	if (context.show_composer && !state.composer.empty())
+		ui << "Composer: " << state.composer << "\n";
+
+	ui << progress_bar(ratio, context.progress_width) << "  " << percent
+	   << "\n";
+	ui << format_time(position) << " / "
+	   << (duration > 0 ? format_time(duration) : "--:--");
+
+	if (!state.playlist.empty()) {
+		ui << "\n\nQUEUE (" << state.playlist.size() << " tracks)\n";
+		ui << format_playlist_text(state);
+	}
+
+	return ui.str();
 }
 
 std::string render_text(const SourceContext &context, const MediaState &state)
@@ -183,25 +210,9 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	std::ostringstream percent;
 	percent << static_cast<int>(std::llround(ratio * 100.0)) << '%';
 
-	if (context.display_mode == 1 && state.available) {
-		std::ostringstream ui;
-		ui << "♪  " << fallback(state.title, "Unknown title") << "\n";
-		ui << "👤 " << fallback(state.artist, "Unknown artist") << "\n";
-		ui << "💿 " << fallback(state.album, "Unknown album") << "\n";
-		if (context.show_composer && !state.composer.empty())
-			ui << "✍  " << state.composer << "\n";
-		ui << progress_bar(ratio, context.progress_width) << "  "
-		   << format_time(relative_position) << " / "
-		   << (duration > 0 ? format_time(duration) : "--:--");
-
-		if (!state.playlist.empty()) {
-			ui << "\n\n📋 Playlist ("
-			   << state.playlist.size() << " tracks):\n";
-			ui << format_playlist_text(state);
-		}
-
-		return ui.str();
-	}
+	if (context.display_mode == 1 && state.available)
+		return render_ui_card_text(context, state, relative_position,
+					   duration, ratio, percent.str());
 
 	std::string output = context.format;
 	replace_all(output, "{title}", fallback(state.title, "Unknown title"));
@@ -294,6 +305,12 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 	     << playback_status_text(state.playback_status) << "\",\n";
 	json << "  \"backend\": \"" << escape_json(state.backend)
 	     << "\",\n";
+	json << "  \"source_app_id\": \"" << escape_json(state.source_app_id)
+	     << "\",\n";
+	json << "  \"legacy_wmp_running\": "
+	     << (state.legacy_wmp_running ? "true" : "false") << ",\n";
+	json << "  \"diagnostic\": \"" << escape_json(state.error_message)
+	     << "\",\n";
 	json << "  \"position_ms\": " << relative_position << ",\n";
 	json << "  \"duration_ms\": " << duration << ",\n";
 	json << "  \"progress\": " << ratio << ",\n";
@@ -346,7 +363,25 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 obs_source_t *create_text_source()
 {
 	obs_data_t *settings = obs_data_create();
+	obs_data_t *font = obs_data_create();
+
 	obs_data_set_string(settings, "text", "");
+	obs_data_set_string(font, "face", "Segoe UI Semibold");
+	obs_data_set_int(font, "size", 30);
+	obs_data_set_int(font, "flags", OBS_FONT_BOLD);
+	obs_data_set_obj(settings, "font", font);
+	obs_data_set_int(settings, "color", 0xF6FAFF);
+	obs_data_set_bool(settings, "gradient", true);
+	obs_data_set_int(settings, "gradient_color", 0x7CE0C3);
+	obs_data_set_int(settings, "gradient_opacity", 100);
+	obs_data_set_double(settings, "gradient_dir", 90.0);
+	obs_data_set_int(settings, "bk_color", 0x101418);
+	obs_data_set_int(settings, "bk_opacity", 72);
+	obs_data_set_bool(settings, "outline", true);
+	obs_data_set_int(settings, "outline_size", 2);
+	obs_data_set_int(settings, "outline_color", 0x0B0F12);
+	obs_data_set_int(settings, "outline_opacity", 80);
+	obs_data_release(font);
 
 	obs_source_t *source = obs_source_create_private(
 		"text_gdiplus_v2", "obs-wmp-legacy internal text", settings);

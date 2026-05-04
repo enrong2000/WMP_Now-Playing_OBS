@@ -4,285 +4,298 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WMP Now Playing</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="now-playing-card" class="card hidden">
-    <!-- Ambient glow background -->
-    <div class="card-glow"></div>
+  <main id="card" class="now-card waiting" aria-live="polite">
+    <div class="accent-line"></div>
+    <section class="mark-panel">
+      <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M18 33V12l18-4v21" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="14" cy="34" r="6" fill="none" stroke="currentColor" stroke-width="3"/>
+        <circle cx="32" cy="30" r="6" fill="none" stroke="currentColor" stroke-width="3"/>
+      </svg>
+      <div id="meter" class="meter" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    </section>
 
-    <!-- Main content wrapper -->
-    <div class="card-inner">
-      <!-- Music icon / visualizer -->
-      <div class="album-art-area">
-        <div class="vinyl-disc" id="vinyl-disc">
-          <div class="vinyl-inner">
-            <svg class="music-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9 18V5l12-2v13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <circle cx="6" cy="18" r="3" stroke="currentColor" stroke-width="1.5"/>
-              <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="1.5"/>
-            </svg>
-          </div>
-          <div class="vinyl-groove groove-1"></div>
-          <div class="vinyl-groove groove-2"></div>
-          <div class="vinyl-groove groove-3"></div>
+    <section class="content">
+      <div class="status-row">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status-text" class="status-text">Waiting</span>
+        <span id="backend" class="backend">WMP Legacy</span>
+      </div>
+
+      <div class="title-wrap">
+        <div id="title" class="title">Waiting for Windows Media Player</div>
+      </div>
+      <div id="artist" class="artist">Start playback in Windows Media Player Legacy.</div>
+      <div id="album" class="album"></div>
+
+      <div class="progress-block">
+        <div class="progress-track">
+          <div id="progress-fill" class="progress-fill"></div>
         </div>
-        <!-- Playback state indicator -->
-        <div class="playback-indicator" id="playback-indicator">
-          <div class="eq-bar bar-1"></div>
-          <div class="eq-bar bar-2"></div>
-          <div class="eq-bar bar-3"></div>
-          <div class="eq-bar bar-4"></div>
+        <div class="time-row">
+          <span id="time-current">--:--</span>
+          <span id="time-duration">--:--</span>
         </div>
       </div>
 
-      <!-- Track info -->
-      <div class="track-info">
-        <div class="track-title-wrap">
-          <span class="track-title" id="track-title">Waiting for music…</span>
+      <div id="queue" class="queue hidden">
+        <div class="queue-head">
+          <span>Queue</span>
+          <span id="queue-count">0 tracks</span>
         </div>
-        <div class="track-artist" id="track-artist"></div>
-        <div class="track-album" id="track-album"></div>
-        <div class="track-composer" id="track-composer-row">
-          <span class="composer-label">Composed by</span>
-          <span class="composer-name" id="track-composer"></span>
-        </div>
-
-        <!-- Progress bar -->
-        <div class="progress-section">
-          <div class="progress-track">
-            <div class="progress-fill" id="progress-fill"></div>
-            <div class="progress-glow" id="progress-glow"></div>
-          </div>
-          <div class="time-row">
-            <span class="time-current" id="time-current">--:--</span>
-            <span class="time-status" id="time-status"></span>
-            <span class="time-duration" id="time-duration">--:--</span>
-          </div>
-        </div>
+        <ol id="queue-list"></ol>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 
   <script>
-    /* ===================================================================
-       Configuration — edit these to match your setup
-       =================================================================== */
     const CONFIG = {
-      // Path to the JSON file written by the OBS plugin.
-      // OBS Browser Source file:// protocol resolves from the local filesystem.
-      // The plugin writes to %APPDATA%/obs-wmp-smtc/now-playing.json by default.
-      jsonUrl: getJsonUrl(),
       pollIntervalMs: 500,
-      hideDelayMs: 4000,      // hide card N ms after media becomes unavailable
-      animDurationMs: 600,
+      idleAfterMs: 4500,
+      defaultJsonPath: '',
     };
 
-    function getJsonUrl() {
-      // Auto-detect: try reading from query params first (?json=path)
+    const state = {
+      jsonUrl: '',
+      currentData: null,
+      lastPollTime: 0,
+      lastPosition: 0,
+      lastDuration: 0,
+      lastStatus: '',
+      lastTrackKey: '',
+      idleTimer: null,
+    };
+
+    const els = {
+      card: document.getElementById('card'),
+      title: document.getElementById('title'),
+      artist: document.getElementById('artist'),
+      album: document.getElementById('album'),
+      backend: document.getElementById('backend'),
+      statusText: document.getElementById('status-text'),
+      progressFill: document.getElementById('progress-fill'),
+      timeCurrent: document.getElementById('time-current'),
+      timeDuration: document.getElementById('time-duration'),
+      queue: document.getElementById('queue'),
+      queueList: document.getElementById('queue-list'),
+      queueCount: document.getElementById('queue-count'),
+    };
+
+    function isObsAbsoluteOrigin() {
+      return window.location.protocol === 'http:' &&
+        window.location.hostname === 'absolute';
+    }
+
+    function encodeAbsolutePath(path) {
+      const clean = path
+        .replace(/^file:\/\/\/?/i, '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+([A-Za-z]:)/, '$1');
+
+      return clean.split('/').map((part, index) => {
+        if (index === 0 && /^[A-Za-z]:$/.test(part)) return part;
+        return encodeURIComponent(part);
+      }).join('/');
+    }
+
+    function toBrowserUrl(value) {
+      if (!value) return '';
+      if (/^https?:\/\//i.test(value)) return value;
+      if (isObsAbsoluteOrigin()) {
+        return 'http://absolute/' + encodeAbsolutePath(value);
+      }
+      if (/^file:\/\//i.test(value)) return value;
+      return 'file:///' + encodeAbsolutePath(value);
+    }
+
+    function withCacheBust(url) {
+      const glue = url.includes('?') ? '&' : '?';
+      return `${url}${glue}t=${Date.now()}`;
+    }
+
+    async function loadOverlayConfig() {
       const params = new URLSearchParams(window.location.search);
-      const custom = params.get('json');
-      if (custom) return custom;
+      const jsonParam = params.get('json');
+      if (jsonParam) return toBrowserUrl(jsonParam);
 
-      // Default path — adjust if your APPDATA differs
-      const appdata = getAppdataPath();
-      return `file:///${appdata}/obs-wmp-smtc/now-playing.json`;
-    }
-
-    function getAppdataPath() {
-      // Best-effort detection for OBS Browser Source context
       try {
-        // In OBS Browser Source, we can read environment via a trick:
-        // Users can also pass ?appdata=C:/Users/xxx/AppData/Roaming
-        const params = new URLSearchParams(window.location.search);
-        const ad = params.get('appdata');
-        if (ad) return ad.replace(/\\/g, '/');
-      } catch (e) {}
-      // Common fallback
-      return 'C:/Users/' + 'EnRonG' + '/AppData/Roaming';
-    }
-
-    /* ===================================================================
-       State
-       =================================================================== */
-    let currentData = null;
-    let previousTitle = '';
-    let hideTimer = null;
-    let isVisible = false;
-
-    const card = document.getElementById('now-playing-card');
-    const titleEl = document.getElementById('track-title');
-    const artistEl = document.getElementById('track-artist');
-    const albumEl = document.getElementById('track-album');
-    const composerRowEl = document.getElementById('track-composer-row');
-    const composerEl = document.getElementById('track-composer');
-    const progressFill = document.getElementById('progress-fill');
-    const progressGlow = document.getElementById('progress-glow');
-    const timeCurrent = document.getElementById('time-current');
-    const timeDuration = document.getElementById('time-duration');
-    const timeStatus = document.getElementById('time-status');
-    const playbackIndicator = document.getElementById('playback-indicator');
-    const vinylDisc = document.getElementById('vinyl-disc');
-
-    /* ===================================================================
-       Polling
-       =================================================================== */
-    async function fetchData() {
-      try {
-        const resp = await fetch(CONFIG.jsonUrl + '?t=' + Date.now(), {
+        const response = await fetch(withCacheBust('config.json'), {
           cache: 'no-store',
         });
-        if (!resp.ok) return null;
-        return await resp.json();
-      } catch (e) {
+        if (response.ok) {
+          const config = await response.json();
+          return toBrowserUrl(config.jsonUrl || config.jsonPath || '');
+        }
+      } catch (error) {}
+
+      const appdata = params.get('appdata');
+      if (appdata) {
+        return toBrowserUrl(`${appdata.replace(/\\/g, '/')}/obs-wmp-legacy/now-playing.json`);
+      }
+
+      return toBrowserUrl(CONFIG.defaultJsonPath);
+    }
+
+    async function fetchData() {
+      if (!state.jsonUrl) return null;
+      try {
+        const response = await fetch(withCacheBust(state.jsonUrl), {
+          cache: 'no-store',
+        });
+        if (!response.ok) return null;
+        return await response.json();
+      } catch (error) {
         return null;
       }
     }
 
-    function updateUI(data) {
-      if (!data || !data.available) {
-        scheduleHide();
-        return;
-      }
-
-      cancelHide();
-
-      // Track change detection
-      const trackKey = `${data.title}|${data.artist}|${data.album}`;
-      const changed = trackKey !== previousTitle;
-      previousTitle = trackKey;
-
-      if (changed) {
-        // Animate track change
-        card.classList.add('track-change');
-        setTimeout(() => card.classList.remove('track-change'), 500);
-      }
-
-      // Show card
-      if (!isVisible) {
-        card.classList.remove('hidden');
-        requestAnimationFrame(() => card.classList.add('visible'));
-        isVisible = true;
-      }
-
-      // Update text fields
-      titleEl.textContent = data.title || 'Unknown Title';
-      artistEl.textContent = data.artist || 'Unknown Artist';
-      albumEl.textContent = data.album || '';
-
-      if (data.composer && data.composer.trim() !== '') {
-        composerRowEl.style.display = 'flex';
-        composerEl.textContent = data.composer;
-      } else {
-        composerRowEl.style.display = 'none';
-      }
-
-      // Album visibility
-      albumEl.style.display = data.album ? 'block' : 'none';
-
-      // Progress
-      const progress = Math.max(0, Math.min(1, data.progress || 0));
-      const pct = (progress * 100).toFixed(2) + '%';
-      progressFill.style.width = pct;
-      progressGlow.style.left = pct;
-
-      timeCurrent.textContent = data.position_text || '--:--';
-      timeDuration.textContent = data.duration_text || '--:--';
-
-      // Playback state
-      const isPlaying = data.status === 'Playing';
-      const isPaused = data.status === 'Paused';
-
-      timeStatus.textContent = isPaused ? '⏸' : '';
-
-      if (isPlaying) {
-        playbackIndicator.classList.add('active');
-        vinylDisc.classList.add('spinning');
-        card.classList.remove('paused');
-      } else {
-        playbackIndicator.classList.remove('active');
-        vinylDisc.classList.remove('spinning');
-        if (isPaused) card.classList.add('paused');
-      }
-    }
-
-    function scheduleHide() {
-      if (hideTimer) return;
-      hideTimer = setTimeout(() => {
-        card.classList.remove('visible');
-        card.classList.add('hidden');
-        isVisible = false;
-        hideTimer = null;
-      }, CONFIG.hideDelayMs);
-    }
-
-    function cancelHide() {
-      if (hideTimer) {
-        clearTimeout(hideTimer);
-        hideTimer = null;
-      }
-    }
-
-    /* Smooth progress interpolation between polls */
-    let lastPollTime = 0;
-    let lastPosition = 0;
-    let lastDuration = 0;
-    let lastStatus = '';
-
-    function interpolateProgress() {
-      if (!currentData || !currentData.available) return;
-      if (lastStatus !== 'Playing') return;
-      if (lastDuration <= 0) return;
-
-      const elapsed = Date.now() - lastPollTime;
-      const interpolatedPos = lastPosition + elapsed;
-      const ratio = Math.min(interpolatedPos / lastDuration, 1);
-      const pct = (ratio * 100).toFixed(2) + '%';
-
-      progressFill.style.width = pct;
-      progressGlow.style.left = pct;
-      timeCurrent.textContent = formatTime(interpolatedPos);
+    function setWaiting(message) {
+      els.card.classList.remove('playing', 'paused');
+      els.card.classList.add('waiting');
+      els.statusText.textContent = 'Waiting';
+      els.backend.textContent = 'WMP Legacy';
+      els.title.textContent = 'Waiting for Windows Media Player';
+      els.artist.textContent = message || 'No now-playing data yet.';
+      els.album.textContent = '';
+      els.progressFill.style.width = '0%';
+      els.timeCurrent.textContent = '--:--';
+      els.timeDuration.textContent = '--:--';
+      els.queue.classList.add('hidden');
     }
 
     function formatTime(ms) {
-      if (ms < 0) ms = 0;
-      const totalSec = Math.floor(ms / 1000);
-      const hours = Math.floor(totalSec / 3600);
-      const minutes = Math.floor((totalSec % 3600) / 60);
-      const seconds = totalSec % 60;
-
+      const safeMs = Math.max(0, ms || 0);
+      const total = Math.floor(safeMs / 1000);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const seconds = total % 60;
       if (hours > 0) {
         return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
       }
       return `${minutes}:${String(seconds).padStart(2, '0')}`;
     }
 
-    /* ===================================================================
-       Main loop
-       =================================================================== */
-    async function poll() {
-      const data = await fetchData();
-      if (data) {
-        currentData = data;
-        lastPollTime = Date.now();
-        lastPosition = data.position_ms || 0;
-        lastDuration = data.duration_ms || 0;
-        lastStatus = data.status || '';
-        updateUI(data);
+    function updateQueue(data) {
+      const items = Array.isArray(data.playlist) ? data.playlist : [];
+      if (!items.length) {
+        els.queue.classList.add('hidden');
+        els.queueList.replaceChildren();
+        return;
       }
+
+      els.queue.classList.remove('hidden');
+      els.queueCount.textContent = `${items.length} ${items.length === 1 ? 'track' : 'tracks'}`;
+
+      const currentIndex = Number.isInteger(data.current_playlist_index)
+        ? data.current_playlist_index
+        : -1;
+      const windowed = items
+        .filter((item) => {
+          if (currentIndex < 0) return item.index < 4;
+          return item.index >= currentIndex - 1 && item.index <= currentIndex + 3;
+        })
+        .slice(0, 5);
+
+      els.queueList.replaceChildren(...windowed.map((item) => {
+        const li = document.createElement('li');
+        if (item.index === currentIndex) li.className = 'current';
+        const title = item.title || 'Unknown title';
+        const artist = item.artist ? ` - ${item.artist}` : '';
+        li.textContent = `${item.index + 1}. ${title}${artist}`;
+        return li;
+      }));
     }
 
-    // Poll for data
-    setInterval(poll, CONFIG.pollIntervalMs);
+    function updateUI(data) {
+      if (!data || !data.available) {
+        const reason = data && data.diagnostic ? data.diagnostic : 'JSON data is not reachable yet.';
+        setWaiting(reason);
+        return;
+      }
 
-    // Smooth interpolation at 30fps
-    setInterval(interpolateProgress, 33);
+      const key = `${data.title || ''}|${data.artist || ''}|${data.album || ''}`;
+      if (key !== state.lastTrackKey) {
+        els.card.classList.remove('track-change');
+        void els.card.offsetWidth;
+        els.card.classList.add('track-change');
+        state.lastTrackKey = key;
+      }
 
-    // Initial poll
-    poll();
+      const status = data.status || 'Unknown';
+      const isPlaying = status === 'Playing';
+      const isPaused = status === 'Paused';
+
+      els.card.classList.toggle('playing', isPlaying);
+      els.card.classList.toggle('paused', isPaused);
+      els.card.classList.remove('waiting');
+      els.statusText.textContent = status;
+      els.backend.textContent = data.backend || data.source_app_id || 'WMP Legacy';
+
+      els.title.textContent = data.title || 'Unknown title';
+      els.artist.textContent = data.artist || 'Unknown artist';
+      els.album.textContent = data.album || '';
+      els.album.classList.toggle('hidden', !data.album);
+
+      const progress = Math.max(0, Math.min(1, Number(data.progress) || 0));
+      els.progressFill.style.width = `${(progress * 100).toFixed(2)}%`;
+      els.timeCurrent.textContent = data.position_text || formatTime(data.position_ms);
+      els.timeDuration.textContent = data.duration_text || formatTime(data.duration_ms);
+
+      updateQueue(data);
+    }
+
+    function interpolateProgress() {
+      if (!state.currentData || state.lastStatus !== 'Playing') return;
+      if (state.lastDuration <= 0) return;
+
+      const elapsed = Date.now() - state.lastPollTime;
+      const position = Math.min(state.lastPosition + elapsed, state.lastDuration);
+      const ratio = position / state.lastDuration;
+      els.progressFill.style.width = `${(ratio * 100).toFixed(2)}%`;
+      els.timeCurrent.textContent = formatTime(position);
+    }
+
+    async function poll() {
+      const data = await fetchData();
+      if (!data) {
+        if (!state.idleTimer) {
+          state.idleTimer = setTimeout(() => {
+            setWaiting('Waiting for now-playing JSON.');
+            state.idleTimer = null;
+          }, CONFIG.idleAfterMs);
+        }
+        return;
+      }
+
+      if (state.idleTimer) {
+        clearTimeout(state.idleTimer);
+        state.idleTimer = null;
+      }
+
+      state.currentData = data;
+      state.lastPollTime = Date.now();
+      state.lastPosition = Number(data.position_ms) || 0;
+      state.lastDuration = Number(data.duration_ms) || 0;
+      state.lastStatus = data.status || '';
+      updateUI(data);
+    }
+
+    async function boot() {
+      state.jsonUrl = await loadOverlayConfig();
+      await poll();
+      setInterval(poll, CONFIG.pollIntervalMs);
+      setInterval(interpolateProgress, 33);
+    }
+
+    boot();
   </script>
 </body>
 </html>

@@ -67,11 +67,13 @@ After installing the plugin:
 2. Add another source -> **Browser**:
    - Check **Local file**
    - Path: `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/index.html`
-   - Width: `480`, Height: `200`
+   - Width: `520`, Height: `260`
    - Custom CSS: *(leave empty)*
 3. Position the overlay wherever you like on your scene.
 
 The overlay reads from `%APPDATA%/obs-wmp-legacy/now-playing.json`, which is updated by the plugin in real time.
+The installer writes `overlay/config.json` so OBS Browser Source can read that JSON file through OBS' `http://absolute/...` local-file origin.
+For manual overlay installs, pass `?json=PATH_TO_JSON` in the Browser Source URL or create the same `config.json` next to `index.html`.
 
 ## Build
 

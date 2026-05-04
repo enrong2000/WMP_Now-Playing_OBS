@@ -2,15 +2,19 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cwctype>
 #include <exception>
+#include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include <Windows.h>
 #include <ObjBase.h>
 #include <OleCtl.h>
+#include <TlHelp32.h>
 #include <comdef.h>
 
 #import "wmp.dll" rename_namespace("WMPLib") named_guids
@@ -74,14 +78,100 @@ std::string tchar_to_utf8(const char *value)
 	return wide_to_utf8(converted);
 }
 
+std::wstring utf8_to_wide(std::string_view value)
+{
+	if (value.empty())
+		return {};
+
+	const int needed = MultiByteToWideChar(
+		CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+		static_cast<int>(value.size()), nullptr, 0);
+	if (needed > 0) {
+		std::wstring converted(static_cast<size_t>(needed), L'\0');
+		MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+				    static_cast<int>(value.size()),
+				    converted.data(), needed);
+		return converted;
+	}
+
+	const int fallback_needed = MultiByteToWideChar(
+		CP_ACP, 0, value.data(), static_cast<int>(value.size()), nullptr,
+		0);
+	if (fallback_needed <= 0)
+		return {};
+
+	std::wstring converted(static_cast<size_t>(fallback_needed), L'\0');
+	MultiByteToWideChar(CP_ACP, 0, value.data(),
+			    static_cast<int>(value.size()), converted.data(),
+			    fallback_needed);
+	return converted;
+}
+
+std::wstring lowercase(std::wstring value)
+{
+	std::transform(value.begin(), value.end(), value.begin(),
+		       [](wchar_t ch) {
+			       return static_cast<wchar_t>(std::towlower(ch));
+		       });
+	return value;
+}
+
+std::string hresult_hex(HRESULT hr)
+{
+	std::ostringstream out;
+	out << "0x" << std::hex << std::uppercase
+	    << static_cast<unsigned long>(static_cast<uint32_t>(hr));
+	return out.str();
+}
+
+bool filter_matches_wmp(std::wstring filter)
+{
+	filter = lowercase(std::move(filter));
+	return filter.empty() || filter.find(L"wmp") != std::wstring::npos ||
+	       filter.find(L"wmplayer") != std::wstring::npos ||
+	       filter.find(L"windows media") != std::wstring::npos;
+}
+
+bool matching_wmp_process_is_running(const std::string &app_filter)
+{
+	std::wstring filter = lowercase(utf8_to_wide(app_filter));
+	if (filter_matches_wmp(filter))
+		filter = L"wmplayer";
+
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return true;
+
+	PROCESSENTRY32W entry = {};
+	entry.dwSize = sizeof(entry);
+
+	bool found = false;
+	if (Process32FirstW(snapshot, &entry)) {
+		do {
+			const std::wstring exe = lowercase(entry.szExeFile);
+			if (filter.empty() ||
+			    exe.find(filter) != std::wstring::npos) {
+				found = true;
+				break;
+			}
+		} while (Process32NextW(snapshot, &entry));
+	}
+
+	CloseHandle(snapshot);
+	return found;
+}
+
 /* ===================================================================
  *  Helper: unavailable state factory
  * =================================================================== */
 
-MediaState unavailable_state(std::string message)
+MediaState unavailable_state(std::string message, bool legacy_wmp_running = false)
 {
 	MediaState state;
 	state.available = false;
+	state.legacy_wmp_running = legacy_wmp_running;
+	if (legacy_wmp_running)
+		state.source_app_id = "wmplayer.exe";
 	state.error_message = std::move(message);
 	state.captured_at = std::chrono::steady_clock::now();
 	return state;
@@ -216,6 +306,7 @@ private:
 struct WmpConnection {
 	IOleObject *ole_object = nullptr;
 	WMPLib::IWMPPlayer4Ptr player;
+	bool remote = false;
 
 	bool is_valid() const
 	{
@@ -234,6 +325,7 @@ struct WmpConnection {
 	void close()
 	{
 		player = nullptr;
+		remote = false;
 		if (ole_object) {
 			ole_object->Close(OLECLOSE_NOSAVE);
 			ole_object->Release();
@@ -277,20 +369,12 @@ static WmpConnection open_remote_connection()
 		return conn;
 	}
 
-	/* Verify it actually connected to the running instance */
+	/* Some WMP builds report isRemote=false even when metadata calls work. */
 	VARIANT_BOOL remote = VARIANT_FALSE;
-	player->get_isRemote(&remote);
-	if (remote != VARIANT_TRUE) {
-		/* Not connected to a running WMP — clean up */
-		player = nullptr;
-		ole->Close(OLECLOSE_NOSAVE);
-		ole->Release();
-		site->Release();
-		return conn;
-	}
-
+	const HRESULT remote_hr = player->get_isRemote(&remote);
 	conn.ole_object = ole;
 	conn.player = player;
+	conn.remote = SUCCEEDED(remote_hr) && remote == VARIANT_TRUE;
 	/* site ref is held by the OLE object */
 	return conn;
 }
@@ -392,15 +476,24 @@ extract_playlist(WMPLib::IWMPPlayer4Ptr &player, int &current_index,
  *  Extract full WMP state (current track + playlist)
  * =================================================================== */
 
-MediaState capture_wmp_com_state(WmpConnection &conn)
+MediaState capture_wmp_com_state(WmpConnection &conn,
+				 const std::string &app_filter)
 {
+	const bool process_running = matching_wmp_process_is_running(app_filter);
+	if (!process_running) {
+		conn.close();
+		return unavailable_state(
+			"Windows Media Player (Legacy) is not running");
+	}
+
 	/* Ensure we have a valid connection */
 	if (!conn.is_valid()) {
 		conn.close();
 		conn = open_remote_connection();
 		if (!conn.player)
 			return unavailable_state(
-				"Windows Media Player (Legacy) is not running or not accessible");
+				"Windows Media Player (Legacy) is running, but the WMP COM bridge is not accessible",
+				true);
 	}
 
 	auto &player = conn.player;
@@ -410,9 +503,9 @@ MediaState capture_wmp_com_state(WmpConnection &conn)
 	try {
 		play_state = player->playState;
 	} catch (const _com_error &err) {
-		/* Connection went stale — force reconnect next poll */
+		/* Connection went stale; force reconnect next poll. */
 		conn.close();
-		return unavailable_state(tchar_to_utf8(err.ErrorMessage()));
+		return unavailable_state(tchar_to_utf8(err.ErrorMessage()), true);
 	}
 
 	PlaybackStatus status = PlaybackStatus::unknown;
@@ -434,30 +527,21 @@ MediaState capture_wmp_com_state(WmpConnection &conn)
 		break;
 	}
 
-	/* If WMP is not in a playable state, return minimal info */
-	if (status != PlaybackStatus::playing &&
-	    status != PlaybackStatus::paused) {
-		MediaState state;
-		state.available = true;
-		state.legacy_wmp_running = true;
-		state.backend = "WMP Legacy COM";
-		state.source_app_id = "wmplayer.exe";
-		state.playback_status = status;
-		state.captured_at = std::chrono::steady_clock::now();
-		return state;
-	}
-
 	/* Extract current media details */
 	WMPLib::IWMPMediaPtr media;
 	try {
 		media = player->currentMedia;
 	} catch (const _com_error &err) {
 		conn.close();
-		return unavailable_state(tchar_to_utf8(err.ErrorMessage()));
+		return unavailable_state(tchar_to_utf8(err.ErrorMessage()), true);
 	}
 
-	if (!media)
-		return unavailable_state("WMP COM: currentMedia is null");
+	if (!media) {
+		if (!conn.remote)
+			conn.close();
+		return unavailable_state("WMP is running but no media is loaded",
+					 true);
+	}
 
 	MediaState state;
 	state.available = true;
@@ -612,24 +696,32 @@ void WmpMonitor::run()
 {
 	/* OleInitialize is needed instead of CoInitializeEx because we
 	   use OLE embedding interfaces (IOleClientSite, OleRun, etc.) */
-	OleInitialize(nullptr);
+	const HRESULT ole_hr = OleInitialize(nullptr);
+	if (FAILED(ole_hr)) {
+		std::lock_guard lock(mutex_);
+		state_ = unavailable_state("OLE initialization failed: " +
+					   hresult_hex(ole_hr));
+		return;
+	}
 
 	WmpConnection conn;
 
 	for (;;) {
+		std::string app_filter;
 		uint32_t refresh_ms = 1000;
 
 		{
 			std::lock_guard lock(mutex_);
 			if (stop_requested_)
 				break;
+			app_filter = app_filter_;
 			refresh_ms = refresh_ms_;
 		}
 
 		MediaState next_state;
 
 		try {
-			next_state = capture_wmp_com_state(conn);
+			next_state = capture_wmp_com_state(conn, app_filter);
 		} catch (const _com_error &err) {
 			next_state =
 				unavailable_state(tchar_to_utf8(err.ErrorMessage()));

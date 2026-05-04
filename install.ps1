@@ -135,6 +135,33 @@ if (-not (Test-Path $jsonDir)) {
 }
 Write-Ok "JSON output directory: $jsonDir"
 
+# ---- Create overlay config for OBS Browser Source ----
+function ConvertTo-ObsAbsoluteUrl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $normalized = $Path.Replace('\', '/')
+    $segments = $normalized -split '/'
+    $encoded = for ($i = 0; $i -lt $segments.Count; $i++) {
+        if ($i -eq 0 -and $segments[$i] -match '^[A-Za-z]:$') {
+            $segments[$i]
+        } else {
+            [System.Uri]::EscapeDataString($segments[$i])
+        }
+    }
+
+    return "http://absolute/$($encoded -join '/')"
+}
+
+$jsonPath = Join-Path $jsonDir "now-playing.json"
+$overlayConfigPath = Join-Path $overlayDir "config.json"
+$overlayConfig = [ordered]@{
+    jsonPath = $jsonPath
+    jsonUrl = ConvertTo-ObsAbsoluteUrl $jsonPath
+} | ConvertTo-Json
+
+Set-Content -Path $overlayConfigPath -Value $overlayConfig -Encoding UTF8
+Write-Ok "Overlay config written: $overlayConfigPath"
+
 # ---- Summary ----
 Write-Host ""
 Write-Host "  +------------------------------------------------+" -ForegroundColor Green
@@ -149,8 +176,8 @@ Write-Host ""
 Write-Host "  3. For the Now-Playing overlay:" -ForegroundColor Gray
 Write-Host "     Add source -> 'Browser' -> check 'Local file'" -ForegroundColor Gray
 Write-Host "     Path: $overlayDir\index.html" -ForegroundColor Yellow
-Write-Host "     Width: 480   Height: 200" -ForegroundColor DarkGray
+Write-Host "     Width: 520   Height: 260" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  JSON data file:" -ForegroundColor Gray
-Write-Host "     $jsonDir\now-playing.json" -ForegroundColor Yellow
+Write-Host "     $jsonPath" -ForegroundColor Yellow
 Write-Host ""
