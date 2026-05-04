@@ -142,7 +142,7 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 | **App filter** | Substring to identify the WMP process. Default: `wmplayer`. |
 | **Display mode** | `Embedded Overlay` (rich Browser-Source overlay rendered inside the plugin source; default), `Template Text`, or `UI Card (Text)`. |
 | **Overlay work mode** | `Minimized Window` (default compact layout) or `Maximized Window` (larger player with previous/upcoming tracks). |
-| **Embedded overlay width/height** | Pixel dimensions of the embedded overlay (default 1120x460, leaving room for minimized playlist reveal). |
+| **Embedded overlay width/height** | Pixel dimensions of the embedded overlay (default 520x520 for the compact minimized window and its reveal animation; maximized mode automatically uses at least 570px wide and enough height for the selected upcoming count). |
 | **Upcoming tracks** | Number of tracks after the current one to show in the maximized playlist window. Default: 3. |
 | **Compact playlist reveal** | How long the minimized window expands the playlist after a track change. Default: 3000 ms. |
 | **Format** | Output template (used in Template Text mode). |

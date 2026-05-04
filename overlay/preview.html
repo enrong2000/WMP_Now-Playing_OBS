@@ -32,6 +32,10 @@
       font: 800 12px "Segoe UI", Arial, sans-serif;
       cursor: pointer;
     }
+
+    .clean-preview .preview-controls {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -172,11 +176,16 @@
       { index: 4, title: 'A Door Between Worlds', artist: 'Asteria', album: 'MapleStory: The Afterlands', duration_sec: 221 },
     ];
 
+    const params = new URLSearchParams(window.location.search);
     let current = 1;
-    let mode = 'minimized';
-    let longTitle = false;
-    let withPlaylist = true;
-    let waiting = false;
+    let mode = params.get('mode') === 'maximized' ? 'maximized' : 'minimized';
+    let longTitle = params.get('long') === '1';
+    let withPlaylist = params.get('playlist') !== '0';
+    let waiting = params.get('waiting') === '1';
+
+    if (params.get('clean') === '1') {
+      document.body.classList.add('clean-preview');
+    }
 
     const els = {
       card: document.getElementById('card'),
@@ -326,6 +335,9 @@
     }
 
     render();
+    if (params.get('reveal') === '1') {
+      els.card.classList.add('playlist-reveal');
+    }
   </script>
 </body>
 </html>

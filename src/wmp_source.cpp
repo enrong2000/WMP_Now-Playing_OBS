@@ -30,6 +30,11 @@ constexpr int kDisplayModeUiCardText = 1;
 constexpr int kDisplayModeEmbeddedOverlay = 2;
 constexpr int kOverlayModeMinimized = 0;
 constexpr int kOverlayModeMaximized = 1;
+constexpr int kDefaultOverlayWidth = 520;
+constexpr int kDefaultOverlayHeight = 520;
+constexpr int kMaximizedOverlayMinWidth = 570;
+constexpr int kMaximizedOverlayBaseHeight = 940;
+constexpr int kMaximizedOverlayTrackHeight = 100;
 
 std::string default_json_path()
 {
@@ -62,8 +67,8 @@ struct SourceContext {
 	bool show_full_playlist = true;
 	uint32_t refresh_ms = 1000;
 	int progress_width = 24;
-	int overlay_width = 1120;
-	int overlay_height = 460;
+	int overlay_width = kDefaultOverlayWidth;
+	int overlay_height = kDefaultOverlayHeight;
 	int upcoming_tracks = 3;
 	int compact_playlist_reveal_ms = 3000;
 	float update_elapsed = 0.0f;
@@ -71,6 +76,24 @@ struct SourceContext {
 	std::string json_output_path;
 	std::string browser_url;
 };
+
+int effective_overlay_width(const SourceContext &context)
+{
+	if (context.overlay_work_mode == kOverlayModeMaximized)
+		return std::max(context.overlay_width, kMaximizedOverlayMinWidth);
+	return context.overlay_width;
+}
+
+int effective_overlay_height(const SourceContext &context)
+{
+	if (context.overlay_work_mode == kOverlayModeMaximized) {
+		const int recommended_height =
+			kMaximizedOverlayBaseHeight +
+			context.upcoming_tracks * kMaximizedOverlayTrackHeight;
+		return std::max(context.overlay_height, recommended_height);
+	}
+	return context.overlay_height;
+}
 
 std::string fallback(std::string value, const char *text)
 {
@@ -641,8 +664,9 @@ void refresh_browser_source(SourceContext *context, bool force)
 		return;
 
 	update_browser_source_settings(context->browser_source,
-				       context->overlay_width,
-				       context->overlay_height, overlay_url);
+				       effective_overlay_width(*context),
+				       effective_overlay_height(*context),
+				       overlay_url);
 	context->browser_url = overlay_url;
 	browser_refresh_no_cache(context->browser_source);
 }
@@ -680,8 +704,10 @@ void source_get_defaults(obs_data_t *settings)
 				 kDisplayModeEmbeddedOverlay);
 	obs_data_set_default_int(settings, "overlay_work_mode",
 				 kOverlayModeMinimized);
-	obs_data_set_default_int(settings, "overlay_width", 1120);
-	obs_data_set_default_int(settings, "overlay_height", 460);
+	obs_data_set_default_int(settings, "overlay_width",
+				 kDefaultOverlayWidth);
+	obs_data_set_default_int(settings, "overlay_height",
+				 kDefaultOverlayHeight);
 	obs_data_set_default_int(settings, "upcoming_tracks", 3);
 	obs_data_set_default_int(settings, "compact_playlist_reveal_ms", 3000);
 	obs_data_set_default_bool(settings, "show_composer", true);
@@ -903,8 +929,8 @@ void ensure_active_source(SourceContext *context)
 			context->browser_url = build_overlay_url(
 				find_overlay_html_path(), *context);
 			context->browser_source = create_browser_source(
-				context->overlay_width,
-				context->overlay_height,
+				effective_overlay_width(*context),
+				effective_overlay_height(*context),
 				context->browser_url);
 		}
 		set_active_child(context, context->browser_source);
@@ -1000,7 +1026,8 @@ uint32_t source_get_width(void *data)
 			if (width > 0)
 				return width;
 		}
-		return static_cast<uint32_t>(std::max(1, context->overlay_width));
+		return static_cast<uint32_t>(
+			std::max(1, effective_overlay_width(*context)));
 	}
 
 	return context->text_source ? obs_source_get_width(context->text_source)
@@ -1018,7 +1045,8 @@ uint32_t source_get_height(void *data)
 			if (height > 0)
 				return height;
 		}
-		return static_cast<uint32_t>(std::max(1, context->overlay_height));
+		return static_cast<uint32_t>(
+			std::max(1, effective_overlay_height(*context)));
 	}
 
 	return context->text_source ? obs_source_get_height(context->text_source)
@@ -1035,6 +1063,12 @@ void source_enum_active_sources(void *data,
 		return;
 
 	enum_callback(context->source, context->active_child, param);
+}
+
+bool source_audio_render(void *, uint64_t *, obs_source_audio_mix *,
+			 uint32_t, size_t, size_t)
+{
+	return false;
 }
 
 } // namespace
@@ -1056,6 +1090,7 @@ obs_source_info wmp_source_info = [] {
 	info.get_width = source_get_width;
 	info.get_height = source_get_height;
 	info.enum_active_sources = source_enum_active_sources;
+	info.audio_render = source_audio_render;
 	return info;
 }();
 

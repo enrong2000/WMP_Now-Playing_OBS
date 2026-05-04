@@ -142,7 +142,7 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 | **App filter** | 用于识别 WMP 进程的子字符串。默认：`wmplayer`。 |
 | **Display mode** | `Embedded Overlay`（默认，在源内直接渲染精美的浏览器叠加层）、`Template Text` 或 `UI Card (Text)`。 |
 | **Overlay work mode** | `Minimized Window`（默认紧凑布局）或 `Maximized Window`（带前一首/后续曲目的完整播放器）。 |
-| **Embedded overlay width/height** | 内嵌叠加层像素尺寸（默认 1120x460，为最小化模式的播放列表展开预留空间）。 |
+| **Embedded overlay width/height** | 内嵌叠加层像素尺寸（最小化窗口默认 520x520，以容纳切歌展开动画；最大化模式会自动使用不小于 570px 的宽度，并按后续曲目数量预留足够高度）。 |
 | **Upcoming tracks** | 最大化播放列表窗口中显示的当前曲目后续曲目数量。默认：3。 |
 | **Compact playlist reveal** | 最小化窗口在切歌后展开播放列表的时长。默认：3000 ms。 |
 | **Format** | 输出模板（在 Template Text 模式下使用）。 |

@@ -33,7 +33,7 @@ body {
 
 body {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 0;
 }
@@ -44,7 +44,8 @@ body {
 
 .player-window {
   position: relative;
-  width: min(1058px, calc(100vw - 64px));
+  width: min(570px, calc(100vw - 16px));
+  margin-top: 8px;
   overflow: hidden;
   border: 2px solid rgba(215, 232, 245, 0.55);
   border-radius: 22px;
@@ -667,22 +668,62 @@ body {
 }
 
 .mode-minimized {
-  width: min(1058px, calc(100vw - 64px));
-  transform: translateY(-36px);
+  width: min(520px, calc(100vw - 16px));
 }
 
 .mode-minimized .window-bar {
-  min-height: 64px;
-  padding: 21px 36px 10px;
+  min-height: 50px;
+  padding: 15px 22px 8px;
+}
+
+.mode-minimized .window-bar h1 {
+  font-size: 21px;
+}
+
+.mode-minimized .window-actions {
+  gap: 12px;
+}
+
+.mode-minimized .window-divider {
+  height: 24px;
+}
+
+.mode-minimized .window-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.mode-minimized .window-icon::before,
+.mode-minimized .window-icon.close::after {
+  inset: 11px 2px auto;
+  height: 2px;
+}
+
+.mode-minimized .window-icon.plus::after {
+  inset: 2px auto auto 11px;
+  width: 2px;
+  height: 20px;
 }
 
 .mode-minimized .now-panel {
-  margin: 0 21px 18px;
+  margin: 0 12px 12px;
 }
 
 .mode-minimized .panel-surface {
-  min-height: 126px;
-  padding: 17px 34px 19px;
+  min-height: 134px;
+  padding: 13px 15px 15px;
+}
+
+.mode-minimized .now-pill {
+  min-height: 30px;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.mode-minimized .now-pill svg {
+  width: 20px;
+  height: 20px;
 }
 
 .mode-minimized .progress-block,
@@ -693,47 +734,80 @@ body {
 }
 
 .mode-minimized .track-grid {
-  grid-template-columns: 104px minmax(260px, 0.92fr) minmax(320px, 1fr);
-  gap: 24px;
-  margin-top: 8px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-areas:
+    "note title"
+    "meta meta";
+  gap: 9px 14px;
+  margin-top: 9px;
 }
 
 .mode-minimized .track-title {
-  font-size: 31px;
+  font-size: 23px;
 }
 
 .mode-minimized .note-mark {
-  width: 88px;
-  height: 88px;
+  grid-area: note;
+  width: 58px;
+  height: 58px;
 }
 
 .mode-minimized .note-mark svg {
-  width: 80px;
-  height: 80px;
+  width: 54px;
+  height: 54px;
+}
+
+.mode-minimized .track-copy {
+  grid-area: title;
 }
 
 .mode-minimized .compact-time {
-  margin-top: 7px;
-  font-size: 21px;
+  margin-top: 5px;
+  font-size: 16px;
 }
 
 .mode-minimized .meta-grid {
-  grid-template-columns: minmax(118px, 0.48fr) 2px minmax(260px, 1fr);
-  gap: 22px;
+  grid-area: meta;
+  grid-template-columns: minmax(126px, 0.42fr) 1px minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 1px;
+}
+
+.mode-minimized .meta-separator {
+  width: 1px;
+  min-height: 45px;
 }
 
 .mode-minimized .meta-label {
-  font-size: 20px;
+  font-size: 14px;
 }
 
 .mode-minimized .meta-value {
-  margin-top: 14px;
-  font-size: 22px;
+  margin-top: 6px;
+  font-size: 16px;
+  line-height: 1.18;
 }
 
 .mode-minimized .playlist-panel {
   display: none;
-  margin-top: -4px;
+  margin: -2px 12px 12px;
+  padding: 8px 10px 10px;
+}
+
+.mode-minimized .playlist-head {
+  font-size: 11px;
+}
+
+.mode-minimized .compact-list {
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.mode-minimized .compact-list li {
+  grid-template-columns: 26px minmax(0, 1fr) minmax(72px, 0.34fr);
+  min-height: 26px;
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .mode-minimized.playlist-reveal .playlist-panel:not(.hidden) {
