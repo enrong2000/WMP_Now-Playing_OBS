@@ -24,6 +24,8 @@ target_link_libraries(obs-wmp-legacy
     user32
     shell32
     advapi32
+    ole32
+    oleaut32
 )
 
 set_target_properties(obs-wmp-legacy PROPERTIES

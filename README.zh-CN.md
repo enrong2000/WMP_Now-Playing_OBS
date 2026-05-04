@@ -9,9 +9,8 @@ OBS Studio 源插件，通过 COM 自动化显示 **Windows Media Player (Legacy
 - 注册名为 **Windows Media Player (Legacy) Now Playing** 的 OBS 输入源。
 - 通过 COM 远程模式（`IWMPRemoteMediaServices`）连接到正在运行的 `wmplayer.exe` 实例。
 - 读取曲目标题、艺术家、专辑、专辑艺术家、作曲家、播放状态、播放位置、时长及完整播放列表。
-- 使用 OBS 内置的 Windows 文字源渲染文本显示。
-- **实时写入媒体状态到 JSON 文件**，支持通过 OBS 浏览器源加载的精美 HTML/CSS 叠加层。
-- 包含 **正在播放叠加层**，采用毛玻璃风格设计，配有动态 EQ 可视化条和发光渐变进度条。
+- **直接在 OBS 源内部渲染精美的毛玻璃风格"正在播放"叠加层**——通过内嵌的私有浏览器源实现，**无需再添加第二个浏览器源**。
+- 同时实时写入 JSON 状态文件，方便外部叠加层 / 其他消费者使用。
 
 ## 工作原理
 
@@ -29,7 +28,21 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 
 ### 管理员权限兼容
 
-当 OBS 以管理员身份运行时（游戏直播捕获窗口常需如此），子进程会自动继承提升的令牌。由于 WMP 通常以普通用户权限运行，跨完整性级别的 COM 连接会失败。插件通过检测提升状态并使用 `CreateProcessWithTokenW` 以降权后的中等完整性令牌启动桥接进程来解决此问题，确保桥接程序能正确连接到用户的 WMP 实例。
+当 OBS 以管理员身份运行时（游戏直播捕获窗口常需如此），子进程会自动继承提升的令牌。由于 WMP 通常以普通用户权限运行，跨完整性级别的 COM 连接会失败。
+
+插件通过**三级回退链**进行降权：
+
+1. **资源管理器 Shell 技巧**（首选）：插件让正在运行的 `explorer.exe`（其本身在用户会话中以中等完整性运行）通过 `IShellDispatch2::ShellExecute` 启动桥接进程。这是最可靠的方式，因为子进程会得到一个**真正的中等完整性主令牌**，并继承用户的正常 `WindowStation\Desktop`——而 WMP 的 COM Remote 握手实际上**两者都需要**。（仅靠 `CreateProcessWithTokenW` 时，子进程仍会附在父进程被锁死的桌面上，即便函数返回成功，WMP 附加也会悄悄失败。）
+2. **`CreateProcessWithTokenW`** 配合关联的非提升令牌——作为次级回退方案。
+3. 普通的 **`CreateProcessW`**——OBS 未提升时使用。
+
+## 正在播放叠加层
+
+精美的"正在播放"叠加层（毛玻璃风格、动态 EQ 条、发光渐变进度条）现在**直接在插件源内部渲染**，由内嵌的私有 OBS 浏览器源实现。**不再需要添加第二个浏览器源。**
+
+如果您喜欢文本输出，可以在源的 *Display mode* 设置中选择 **Template Text** 或 **UI Card (Text)**。
+
+叠加层的 HTML/CSS 文件仍然安装在 `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`，如需在 OBS 之外使用，仍可作为外部浏览器源加载。
 
 ## 安装
 
@@ -76,18 +89,18 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 
 安装插件后：
 
-1. 在 OBS 中添加源 → **Windows Media Player (Legacy) Now Playing**
-  （此操作激活插件并开始写入 JSON 数据）。
-2. 再添加一个源 → **浏览器**：
-   - 勾选 **本地文件**
-   - 路径：`<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/index.html`
-   - 宽度：`520`，高度：`260`
-   - 自定义 CSS：*（留空）*
-3. 将叠加层放置在场景中您喜欢的位置。
+1. 在 OBS 中添加源 → **Windows Media Player (Legacy) Now Playing**。
+2. 完成——精美的毛玻璃叠加层会在该单一源内部直接渲染。在场景中按需放置和缩放即可。
 
-叠加层从 `%APPDATA%/obs-wmp-legacy/now-playing.json` 读取数据，该文件由插件实时更新。
-安装程序会写入 `overlay/config.json`，以便 OBS 浏览器源可以通过 OBS 的 `http://absolute/...` 本地文件源协议读取该 JSON 文件。
-如果手动安装叠加层，请在浏览器源 URL 中传入 `?json=JSON文件路径`，或在 `index.html` 旁创建相同的 `config.json`。
+（叠加层的宽度/高度可在源的**属性**面板中调整。）
+
+如果您希望在插件外部使用叠加层（例如在另一台机器或独立的浏览器源上），叠加层仍然安装到：
+
+```
+<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/index.html
+```
+
+JSON 状态写入 `%APPDATA%/obs-wmp-legacy/now-playing.json`。在浏览器源 URL 中传入 `?json=JSON路径`，或在 `index.html` 旁创建 `config.json`，内容为 `{"jsonUrl":"http://absolute/.../now-playing.json"}`。
 
 ## 构建
 
@@ -119,14 +132,15 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 | 设置 | 说明 |
 |------|------|
 | **App filter** | 用于识别 WMP 进程的子字符串。默认：`wmplayer`。 |
-| **Display mode** | `UI Card`（结构化面板）或 `Template Text`（自定义格式字符串）。 |
+| **Display mode** | `Embedded Overlay`（默认，在源内直接渲染精美的浏览器叠加层）、`Template Text` 或 `UI Card (Text)`。 |
+| **Embedded overlay width/height** | 内嵌叠加层像素尺寸（默认 520x260）。 |
 | **Format** | 输出模板（在 Template Text 模式下使用）。 |
 | **Progress width** | `{progress_bar}` 的字符宽度。 |
-| **Show composer** | 在 UI Card 模式下显示作曲家信息（如有）。 |
+| **Show composer** | 在 UI Card (Text) 模式下显示作曲家信息（如有）。 |
 | **Show full playlist** | 显示源播放列表的所有曲目（通过 `IWMPPlaylistCollection`）。关闭时仅显示当前播放队列。默认：开启。 |
-| **Refresh interval** | COM 轮询间隔（毫秒）。 |
+| **Refresh interval** | COM 轮询间隔（毫秒）。默认：500 ms。 |
 | **Hide when no media** | 当 WMP 未运行或未加载媒体时不显示任何内容。 |
-| **JSON output path** | 叠加层使用的 JSON 数据文件路径。默认：`%APPDATA%/obs-wmp-legacy/now-playing.json`。 |
+| **JSON output path** | 内嵌叠加层（及任何外部叠加层）使用的 JSON 数据文件路径。默认：`%APPDATA%/obs-wmp-legacy/now-playing.json`。 |
 
 ### 格式令牌
 
@@ -151,5 +165,6 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 
 ### 显示模式
 
-- **UI Card**（默认）：带图标、作曲家信息和播放列表显示的结构化正在播放面板。
+- **Embedded Overlay**（默认）：在源内部通过内嵌的私有 OBS 浏览器源渲染的精美毛玻璃"正在播放"叠加层。无需第二个源。
+- **UI Card (Text)**：带图标、作曲家信息和播放列表显示的结构化正在播放文本面板。
 - **Template Text**：可自定义的令牌模板模式，完全控制输出格式。

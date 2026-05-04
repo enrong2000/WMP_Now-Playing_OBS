@@ -185,12 +185,13 @@ Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor White
 Write-Host "  1. Open OBS Studio" -ForegroundColor Gray
 Write-Host "  2. Add source -> 'Windows Media Player (Legacy) Now Playing'" -ForegroundColor Gray
-Write-Host "     (This activates the plugin and starts writing JSON data)" -ForegroundColor DarkGray
+Write-Host "     The rich Now-Playing overlay is embedded directly in the source." -ForegroundColor DarkGray
+Write-Host "     (No separate Browser Source needed.)" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  3. For the Now-Playing overlay:" -ForegroundColor Gray
-Write-Host "     Add source -> 'Browser' -> check 'Local file'" -ForegroundColor Gray
-Write-Host "     Path: $overlayDir\index.html" -ForegroundColor Yellow
-Write-Host "     Width: 520   Height: 260" -ForegroundColor DarkGray
+Write-Host "  Embedded overlay size can be adjusted in the source's Properties." -ForegroundColor Gray
+Write-Host ""
+Write-Host "  External overlay HTML (optional, for non-OBS use):" -ForegroundColor Gray
+Write-Host "     $overlayDir\index.html" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  JSON data file:" -ForegroundColor Gray
 Write-Host "     $jsonPath" -ForegroundColor Yellow
