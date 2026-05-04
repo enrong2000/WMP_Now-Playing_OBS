@@ -538,6 +538,10 @@ MediaState capture_wmp_com_state(WmpConnection &conn)
 WmpMonitor::~WmpMonitor()
 {
 	stop();
+	if (stop_event_)
+		CloseHandle(static_cast<HANDLE>(stop_event_));
+	if (wake_event_)
+		CloseHandle(static_cast<HANDLE>(wake_event_));
 }
 
 void WmpMonitor::start()
@@ -545,6 +549,16 @@ void WmpMonitor::start()
 	std::lock_guard lock(mutex_);
 	if (started_)
 		return;
+
+	if (!stop_event_)
+		stop_event_ = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	else
+		ResetEvent(static_cast<HANDLE>(stop_event_));
+
+	if (!wake_event_)
+		wake_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	else
+		ResetEvent(static_cast<HANDLE>(wake_event_));
 
 	stop_requested_ = false;
 	started_ = true;
@@ -560,7 +574,10 @@ void WmpMonitor::stop()
 		stop_requested_ = true;
 	}
 
-	wake_.notify_all();
+	if (stop_event_)
+		SetEvent(static_cast<HANDLE>(stop_event_));
+	if (wake_event_)
+		SetEvent(static_cast<HANDLE>(wake_event_));
 
 	if (worker_.joinable())
 		worker_.join();
@@ -577,7 +594,8 @@ void WmpMonitor::configure(std::string app_filter, uint32_t refresh_ms)
 		refresh_ms_ = std::clamp<uint32_t>(refresh_ms, 250, 5000);
 	}
 
-	wake_.notify_all();
+	if (wake_event_)
+		SetEvent(static_cast<HANDLE>(wake_event_));
 }
 
 MediaState WmpMonitor::snapshot() const
@@ -630,10 +648,36 @@ void WmpMonitor::run()
 			state_ = std::move(next_state);
 		}
 
-		std::unique_lock lock(mutex_);
-		wake_.wait_for(lock, std::chrono::milliseconds(refresh_ms),
-			       [this] { return stop_requested_; });
 		if (stop_requested_)
+			break;
+
+		HANDLE events[2] = { static_cast<HANDLE>(stop_event_), static_cast<HANDLE>(wake_event_) };
+		DWORD timeout = refresh_ms;
+		ULONGLONG start_tick = GetTickCount64();
+
+		while (true) {
+			DWORD wait_res = MsgWaitForMultipleObjects(2, events, FALSE, timeout, QS_ALLINPUT);
+			if (wait_res == WAIT_OBJECT_0) {
+				break;
+			} else if (wait_res == WAIT_OBJECT_0 + 1) {
+				break;
+			} else if (wait_res == WAIT_OBJECT_0 + 2) {
+				MSG msg;
+				while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+			} else if (wait_res == WAIT_TIMEOUT) {
+				break;
+			}
+
+			ULONGLONG elapsed = GetTickCount64() - start_tick;
+			if (elapsed >= refresh_ms)
+				break;
+			timeout = refresh_ms - static_cast<DWORD>(elapsed);
+		}
+
+		if (WaitForSingleObject(events[0], 0) == WAIT_OBJECT_0)
 			break;
 	}
 

@@ -69,7 +69,8 @@ private:
 	void run();
 
 	mutable std::mutex mutex_;
-	std::condition_variable wake_;
+	void *stop_event_ = nullptr;
+	void *wake_event_ = nullptr;
 	std::thread worker_;
 	bool stop_requested_ = false;
 	bool started_ = false;
