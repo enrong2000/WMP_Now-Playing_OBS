@@ -23,6 +23,7 @@ target_link_libraries(obs-wmp-legacy
     OBS::libobs
     user32
     shell32
+    advapi32
 )
 
 set_target_properties(obs-wmp-legacy PROPERTIES

@@ -180,8 +180,77 @@ static std::string find_bridge_exe()
 	return {};
 }
 
+/* ===================================================================
+ *  Elevation detection and de-elevation helpers
+ *
+ *  When OBS runs as Administrator, spawned child processes inherit
+ *  the elevated token.  WMP COM Remote mode fails when an elevated
+ *  process tries to connect to a non-elevated WMP instance due to
+ *  COM cross-integrity-level restrictions.  To fix this, we detect
+ *  elevation and spawn the bridge with a de-elevated (medium-
+ *  integrity) token obtained from the linked token.
+ * =================================================================== */
+
+static bool is_process_elevated()
+{
+	HANDLE token = nullptr;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+		return false;
+
+	TOKEN_ELEVATION elev = {};
+	DWORD size = sizeof(elev);
+	BOOL result = GetTokenInformation(token, TokenElevation, &elev,
+					  sizeof(elev), &size);
+	CloseHandle(token);
+	return result && elev.TokenIsElevated;
+}
+
+/**
+ * Obtain a non-elevated primary token suitable for CreateProcessWithTokenW.
+ *
+ * When the current process is elevated via UAC, its token has a "linked
+ * token" that represents the original non-elevated user identity.  We
+ * retrieve it and duplicate it as a primary token.
+ *
+ * Returns nullptr if the linked token cannot be obtained.
+ */
+static HANDLE get_non_elevated_token()
+{
+	HANDLE process_token = nullptr;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE,
+			      &process_token))
+		return nullptr;
+
+	TOKEN_LINKED_TOKEN linked = {};
+	DWORD size = sizeof(linked);
+	BOOL ok = GetTokenInformation(process_token, TokenLinkedToken,
+				      &linked, sizeof(linked), &size);
+	CloseHandle(process_token);
+
+	if (!ok || !linked.LinkedToken)
+		return nullptr;
+
+	/* The linked token is an identification-level impersonation token;
+	   duplicate it as a primary token for CreateProcessWithTokenW. */
+	HANDLE primary = nullptr;
+	ok = DuplicateTokenEx(linked.LinkedToken,
+			      TOKEN_QUERY | TOKEN_DUPLICATE |
+				      TOKEN_ASSIGN_PRIMARY |
+				      TOKEN_ADJUST_DEFAULT |
+				      TOKEN_ADJUST_SESSIONID,
+			      nullptr, SecurityImpersonation, TokenPrimary,
+			      &primary);
+	CloseHandle(linked.LinkedToken);
+	return ok ? primary : nullptr;
+}
+
 /**
  * Spawn the bridge process and capture its stdout output.
+ *
+ * When the host process (OBS) is running elevated, the bridge is
+ * launched with a de-elevated token so it can connect to the user's
+ * non-elevated WMP instance via COM Remote mode.
+ *
  * Returns the raw JSON string, or empty on failure.
  */
 static std::string run_bridge_process(const std::string &exe_path)
@@ -193,6 +262,7 @@ static std::string run_bridge_process(const std::string &exe_path)
 	HANDLE read_pipe = nullptr, write_pipe = nullptr;
 	if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0))
 		return {};
+	/* Only the write end should be inherited by the child */
 	SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
 
 	STARTUPINFOW si = {};
@@ -206,9 +276,36 @@ static std::string run_bridge_process(const std::string &exe_path)
 	PROCESS_INFORMATION pi = {};
 
 	std::wstring wpath = utf8_to_wide(exe_path);
-	BOOL ok = CreateProcessW(wpath.c_str(), nullptr, nullptr, nullptr,
-				 TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
-				 &pi);
+	BOOL ok = FALSE;
+
+	/* Try de-elevated launch first when running as Administrator */
+	HANDLE deelev_token = nullptr;
+	if (is_process_elevated()) {
+		deelev_token = get_non_elevated_token();
+	}
+
+	if (deelev_token) {
+		ok = CreateProcessWithTokenW(
+			deelev_token, 0 /* dwLogonFlags */,
+			wpath.c_str(), nullptr /* lpCommandLine */,
+			CREATE_NO_WINDOW, nullptr /* lpEnvironment */,
+			nullptr /* lpCurrentDirectory */, &si, &pi);
+
+		if (!ok) {
+			blog(LOG_WARNING,
+			     "[obs-wmp-legacy] de-elevated launch failed "
+			     "(0x%08lX), falling back to normal launch",
+			     (unsigned long)GetLastError());
+		}
+		CloseHandle(deelev_token);
+	}
+
+	if (!ok) {
+		/* Normal launch (not elevated, or de-elevation failed) */
+		ok = CreateProcessW(wpath.c_str(), nullptr, nullptr, nullptr,
+				    TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
+				    &si, &pi);
+	}
 
 	/* Close the write end in our process so ReadFile can detect EOF */
 	CloseHandle(write_pipe);
@@ -534,6 +631,12 @@ void WmpMonitor::run()
 	} else {
 		blog(LOG_INFO, "[obs-wmp-legacy] using bridge: %s",
 		     bridge_exe.c_str());
+	}
+
+	if (is_process_elevated()) {
+		blog(LOG_INFO,
+		     "[obs-wmp-legacy] OBS is running elevated; "
+		     "bridge will be de-elevated for WMP COM access");
 	}
 
 	for (;;) {

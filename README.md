@@ -25,6 +25,10 @@ Windows Media Player (Legacy) does not register itself in the Running Object Tab
 
 > **Why a subprocess?** Running WMP COM automation in-process inside OBS is unreliable due to COM apartment conflicts with OBS's threading model and its embedded Chromium (CEF) browser. The subprocess approach guarantees a clean COM environment on every poll.
 
+### Administrator Compatibility
+
+When OBS runs as Administrator (common for game capture), spawned child processes inherit the elevated token. Since WMP typically runs as a standard user, cross-integrity-level COM connections fail. The plugin automatically detects elevation and launches the bridge with a de-elevated (medium-integrity) token via `CreateProcessWithTokenW`, ensuring the bridge can connect to the user's WMP instance regardless of OBS's privilege level.
+
 ## Installation
 
 ### From Release Zip (Recommended)
