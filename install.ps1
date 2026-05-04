@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    OBS WMP SMTC Plugin Installer
+    OBS Windows Media Player (Legacy) Now-Playing Plugin Installer
 
 .DESCRIPTION
-    Installs the obs-wmp-smtc plugin and its Now-Playing overlay into the
+    Installs the obs-wmp-legacy plugin and its Now-Playing overlay into the
     specified OBS Studio installation directory.
 
 .PARAMETER ObsPath
@@ -21,17 +21,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ---- Colour helpers ----
+# ---- Output helpers ----
 function Write-Step  { param([string]$Msg) Write-Host "  [*] $Msg" -ForegroundColor Cyan }
-function Write-Ok    { param([string]$Msg) Write-Host "  [✓] $Msg" -ForegroundColor Green }
-function Write-Warn  { param([string]$Msg) Write-Host "  [!] $Msg" -ForegroundColor Yellow }
-function Write-Fail  { param([string]$Msg) Write-Host "  [✗] $Msg" -ForegroundColor Red }
+function Write-Ok    { param([string]$Msg) Write-Host "  [OK] $Msg" -ForegroundColor Green }
+function Write-Warn  { param([string]$Msg) Write-Host "  [!!] $Msg" -ForegroundColor Yellow }
+function Write-Fail  { param([string]$Msg) Write-Host "  [FAIL] $Msg" -ForegroundColor Red }
 
 # ---- Banner ----
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "  ║   OBS WMP SMTC — Now-Playing Plugin Setup   ║" -ForegroundColor Magenta
-Write-Host "  ╚══════════════════════════════════════════════╝" -ForegroundColor Magenta
+Write-Host "  +------------------------------------------------+" -ForegroundColor Magenta
+Write-Host "  |  OBS WMP (Legacy) -- Now-Playing Plugin Setup   |" -ForegroundColor Magenta
+Write-Host "  +------------------------------------------------+" -ForegroundColor Magenta
 Write-Host ""
 
 # ---- Locate OBS ----
@@ -75,7 +75,7 @@ if (-not (Test-Path $ObsPath)) {
 
 # ---- Determine plugin and data paths ----
 $pluginDir = Join-Path $ObsPath "obs-plugins\64bit"
-$dataDir   = Join-Path $ObsPath "data\obs-plugins\obs-wmp-smtc"
+$dataDir   = Join-Path $ObsPath "data\obs-plugins\obs-wmp-legacy"
 
 # Also support the newer obs-studio directory structure
 if (-not (Test-Path (Split-Path $pluginDir))) {
@@ -96,14 +96,17 @@ if (-not (Test-Path $overlayDir)) { New-Item -ItemType Directory -Path $overlayD
 $scriptRoot = $PSScriptRoot
 
 # Plugin DLL (if built)
-$dllSrc = Join-Path $scriptRoot "build\RelWithDebInfo\obs-wmp-smtc.dll"
-if (-not (Test-Path $dllSrc)) { $dllSrc = Join-Path $scriptRoot "build\Release\obs-wmp-smtc.dll" }
-if (-not (Test-Path $dllSrc)) { $dllSrc = Join-Path $scriptRoot "build\Debug\obs-wmp-smtc.dll" }
+$dllSrc = Join-Path $scriptRoot "build\RelWithDebInfo\obs-wmp-legacy.dll"
+if (-not (Test-Path $dllSrc)) { $dllSrc = Join-Path $scriptRoot "build\Release\obs-wmp-legacy.dll" }
+if (-not (Test-Path $dllSrc)) { $dllSrc = Join-Path $scriptRoot "build\Debug\obs-wmp-legacy.dll" }
+
+# Also check if the DLL is placed alongside the script (release zip layout)
+if (-not (Test-Path $dllSrc)) { $dllSrc = Join-Path $scriptRoot "obs-plugins\64bit\obs-wmp-legacy.dll" }
 
 if (Test-Path $dllSrc) {
     Write-Step "Copying plugin DLL..."
     Copy-Item $dllSrc -Destination $pluginDir -Force
-    Write-Ok "obs-wmp-smtc.dll installed"
+    Write-Ok "obs-wmp-legacy.dll installed"
 } else {
     Write-Warn "Plugin DLL not found (not built yet?). Skipping DLL copy."
     Write-Warn "Build the plugin first, then re-run this script."
@@ -111,18 +114,22 @@ if (Test-Path $dllSrc) {
 
 # Overlay files
 $overlaySrc = Join-Path $scriptRoot "overlay"
+# Also check release zip layout
+if (-not (Test-Path $overlaySrc)) {
+    $overlaySrc = Join-Path $scriptRoot "data\obs-plugins\obs-wmp-legacy\overlay"
+}
+
 if (Test-Path $overlaySrc) {
     Write-Step "Copying overlay files..."
     Copy-Item (Join-Path $overlaySrc "index.html") -Destination $overlayDir -Force
     Copy-Item (Join-Path $overlaySrc "style.css")  -Destination $overlayDir -Force
     Write-Ok "Overlay files installed to: $overlayDir"
 } else {
-    Write-Fail "Overlay directory not found at: $overlaySrc"
-    exit 1
+    Write-Warn "Overlay directory not found. Skipping overlay copy."
 }
 
 # ---- Create APPDATA directory for JSON output ----
-$jsonDir = Join-Path $env:APPDATA "obs-wmp-smtc"
+$jsonDir = Join-Path $env:APPDATA "obs-wmp-legacy"
 if (-not (Test-Path $jsonDir)) {
     New-Item -ItemType Directory -Path $jsonDir -Force | Out-Null
 }
@@ -130,17 +137,17 @@ Write-Ok "JSON output directory: $jsonDir"
 
 # ---- Summary ----
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "  ║         Installation Complete!               ║" -ForegroundColor Green
-Write-Host "  ╚══════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "  +------------------------------------------------+" -ForegroundColor Green
+Write-Host "  |           Installation Complete!                |" -ForegroundColor Green
+Write-Host "  +------------------------------------------------+" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor White
 Write-Host "  1. Open OBS Studio" -ForegroundColor Gray
-Write-Host "  2. Add source → 'WMP Legacy Now Playing (SMTC)'" -ForegroundColor Gray
+Write-Host "  2. Add source -> 'Windows Media Player (Legacy) Now Playing'" -ForegroundColor Gray
 Write-Host "     (This activates the plugin and starts writing JSON data)" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  3. For the beautiful Now-Playing overlay:" -ForegroundColor Gray
-Write-Host "     Add source → 'Browser' → check 'Local file'" -ForegroundColor Gray
+Write-Host "  3. For the Now-Playing overlay:" -ForegroundColor Gray
+Write-Host "     Add source -> 'Browser' -> check 'Local file'" -ForegroundColor Gray
 Write-Host "     Path: $overlayDir\index.html" -ForegroundColor Yellow
 Write-Host "     Width: 480   Height: 200" -ForegroundColor DarkGray
 Write-Host ""

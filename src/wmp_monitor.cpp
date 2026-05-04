@@ -1,4 +1,4 @@
-#include "smtc_monitor.hpp"
+#include "wmp_monitor.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +10,7 @@
 
 #include <Windows.h>
 #include <ObjBase.h>
+#include <OleCtl.h>
 #include <comdef.h>
 
 #import "wmp.dll" rename_namespace("WMPLib") named_guids
@@ -87,30 +88,211 @@ MediaState unavailable_state(std::string message)
 }
 
 /* ===================================================================
- *  COM attach: find a running WMP instance via ROT / GetActiveObject
+ *  IWMPRemoteMediaServices host site
+ *
+ *  Windows Media Player (Legacy) does NOT register itself in the
+ *  Running Object Table, so GetActiveObject always fails.
+ *  The correct approach is to CoCreateInstance an in-process WMP
+ *  OCX and set a client site implementing IWMPRemoteMediaServices
+ *  with service type "Remote". This causes the OCX to attach to
+ *  the already-running WMP process and share its playback state.
  * =================================================================== */
 
-WMPLib::IWMPPlayer4Ptr attach_running_wmp()
-{
-	CLSID clsid;
-	HRESULT hr = CLSIDFromProgID(L"WMPlayer.OCX", &clsid);
-	if (FAILED(hr))
-		return nullptr;
+class RemoteHostSite final : public IOleClientSite,
+			     public IServiceProvider,
+			     public WMPLib::IWMPRemoteMediaServices {
+public:
+	/* IUnknown */
+	ULONG __stdcall AddRef() override
+	{
+		return InterlockedIncrement(&refs_);
+	}
 
-	IUnknown *punk = nullptr;
-	hr = GetActiveObject(clsid, nullptr, &punk);
-	if (FAILED(hr) || !punk)
-		return nullptr;
+	ULONG __stdcall Release() override
+	{
+		const ULONG refs = InterlockedDecrement(&refs_);
+		if (refs == 0)
+			delete this;
+		return refs;
+	}
+
+	HRESULT __stdcall QueryInterface(REFIID riid, void **out) override
+	{
+		if (!out)
+			return E_POINTER;
+		*out = nullptr;
+		if (riid == IID_IUnknown || riid == IID_IOleClientSite)
+			*out = static_cast<IOleClientSite *>(this);
+		else if (riid == IID_IServiceProvider)
+			*out = static_cast<IServiceProvider *>(this);
+		else if (riid == __uuidof(WMPLib::IWMPRemoteMediaServices))
+			*out = static_cast<WMPLib::IWMPRemoteMediaServices *>(
+				this);
+		else
+			return E_NOINTERFACE;
+		AddRef();
+		return S_OK;
+	}
+
+	/* IOleClientSite */
+	HRESULT __stdcall SaveObject() override { return E_NOTIMPL; }
+	HRESULT __stdcall GetMoniker(DWORD, DWORD, IMoniker **) override
+	{
+		return E_NOTIMPL;
+	}
+	HRESULT __stdcall GetContainer(IOleContainer **container) override
+	{
+		if (container)
+			*container = nullptr;
+		return E_NOINTERFACE;
+	}
+	HRESULT __stdcall ShowObject() override { return S_OK; }
+	HRESULT __stdcall OnShowWindow(BOOL) override { return S_OK; }
+	HRESULT __stdcall RequestNewObjectLayout() override
+	{
+		return E_NOTIMPL;
+	}
+
+	/* IServiceProvider */
+	HRESULT __stdcall QueryService(REFGUID service, REFIID riid,
+				       void **out) override
+	{
+		if (!out)
+			return E_POINTER;
+		*out = nullptr;
+		if (service == __uuidof(WMPLib::IWMPRemoteMediaServices) ||
+		    riid == __uuidof(WMPLib::IWMPRemoteMediaServices))
+			return QueryInterface(riid, out);
+		return E_NOINTERFACE;
+	}
+
+	/* IWMPRemoteMediaServices */
+	HRESULT __stdcall raw_GetServiceType(BSTR *type) override
+	{
+		if (!type)
+			return E_POINTER;
+		*type = SysAllocString(L"Remote");
+		return *type ? S_OK : E_OUTOFMEMORY;
+	}
+
+	HRESULT __stdcall raw_GetApplicationName(BSTR *name) override
+	{
+		if (!name)
+			return E_POINTER;
+		*name = SysAllocString(L"OBS WMP Legacy Now-Playing");
+		return *name ? S_OK : E_OUTOFMEMORY;
+	}
+
+	HRESULT __stdcall raw_GetScriptableObject(BSTR *name,
+						  IDispatch **dispatch) override
+	{
+		if (name)
+			*name = nullptr;
+		if (dispatch)
+			*dispatch = nullptr;
+		return E_NOTIMPL;
+	}
+
+	HRESULT __stdcall raw_GetCustomUIMode(BSTR *file) override
+	{
+		if (file)
+			*file = nullptr;
+		return E_NOTIMPL;
+	}
+
+private:
+	volatile LONG refs_ = 1;
+};
+
+/* ===================================================================
+ *  Persistent remote connection context
+ *
+ *  We keep the OLE object and player pointer alive across polls
+ *  to avoid re-creating the COM connection on every tick.
+ *  The connection is re-established if the player becomes invalid
+ *  or if WMP is restarted.
+ * =================================================================== */
+
+struct WmpConnection {
+	IOleObject *ole_object = nullptr;
+	WMPLib::IWMPPlayer4Ptr player;
+
+	bool is_valid() const
+	{
+		if (!player || !ole_object)
+			return false;
+		/* Probe the connection with a lightweight call */
+		try {
+			WMPLib::WMPPlayState ps;
+			HRESULT hr = player->get_playState(&ps);
+			return SUCCEEDED(hr);
+		} catch (...) {
+			return false;
+		}
+	}
+
+	void close()
+	{
+		player = nullptr;
+		if (ole_object) {
+			ole_object->Close(OLECLOSE_NOSAVE);
+			ole_object->Release();
+			ole_object = nullptr;
+		}
+	}
+};
+
+static WmpConnection open_remote_connection()
+{
+	WmpConnection conn;
+
+	auto *site = new RemoteHostSite();
+	IOleObject *ole = nullptr;
+	HRESULT hr = CoCreateInstance(__uuidof(WMPLib::WindowsMediaPlayer),
+				     nullptr, CLSCTX_INPROC_SERVER,
+				     IID_PPV_ARGS(&ole));
+	if (FAILED(hr) || !ole) {
+		site->Release();
+		return conn;
+	}
+
+	hr = ole->SetClientSite(site);
+	if (FAILED(hr)) {
+		ole->Release();
+		site->Release();
+		return conn;
+	}
+
+	ole->SetHostNames(L"OBS WMP Legacy Now-Playing", nullptr);
+	OleSetContainedObject(ole, TRUE);
+	OleRun(ole);
 
 	WMPLib::IWMPPlayer4Ptr player;
-	hr = punk->QueryInterface(__uuidof(WMPLib::IWMPPlayer4),
-				  reinterpret_cast<void **>(&player));
-	punk->Release();
+	hr = ole->QueryInterface(__uuidof(WMPLib::IWMPPlayer4),
+				 reinterpret_cast<void **>(&player));
+	if (FAILED(hr) || !player) {
+		ole->Close(OLECLOSE_NOSAVE);
+		ole->Release();
+		site->Release();
+		return conn;
+	}
 
-	if (FAILED(hr))
-		return nullptr;
+	/* Verify it actually connected to the running instance */
+	VARIANT_BOOL remote = VARIANT_FALSE;
+	player->get_isRemote(&remote);
+	if (remote != VARIANT_TRUE) {
+		/* Not connected to a running WMP — clean up */
+		player = nullptr;
+		ole->Close(OLECLOSE_NOSAVE);
+		ole->Release();
+		site->Release();
+		return conn;
+	}
 
-	return player;
+	conn.ole_object = ole;
+	conn.player = player;
+	/* site ref is held by the OLE object */
+	return conn;
 }
 
 /* ===================================================================
@@ -210,18 +392,26 @@ extract_playlist(WMPLib::IWMPPlayer4Ptr &player, int &current_index,
  *  Extract full WMP state (current track + playlist)
  * =================================================================== */
 
-MediaState capture_wmp_com_state()
+MediaState capture_wmp_com_state(WmpConnection &conn)
 {
-	auto player = attach_running_wmp();
-	if (!player)
-		return unavailable_state(
-			"Windows Media Player is not running or not accessible via ROT");
+	/* Ensure we have a valid connection */
+	if (!conn.is_valid()) {
+		conn.close();
+		conn = open_remote_connection();
+		if (!conn.player)
+			return unavailable_state(
+				"Windows Media Player (Legacy) is not running or not accessible");
+	}
 
-	/* Check play state — only extract details for Playing/Paused */
+	auto &player = conn.player;
+
+	/* Check play state */
 	WMPLib::WMPPlayState play_state;
 	try {
 		play_state = player->playState;
 	} catch (const _com_error &err) {
+		/* Connection went stale — force reconnect next poll */
+		conn.close();
 		return unavailable_state(tchar_to_utf8(err.ErrorMessage()));
 	}
 
@@ -262,6 +452,7 @@ MediaState capture_wmp_com_state()
 	try {
 		media = player->currentMedia;
 	} catch (const _com_error &err) {
+		conn.close();
 		return unavailable_state(tchar_to_utf8(err.ErrorMessage()));
 	}
 
@@ -341,15 +532,15 @@ MediaState capture_wmp_com_state()
 } // namespace
 
 /* ===================================================================
- *  SmtcMonitor public interface
+ *  WmpMonitor public interface
  * =================================================================== */
 
-SmtcMonitor::~SmtcMonitor()
+WmpMonitor::~WmpMonitor()
 {
 	stop();
 }
 
-void SmtcMonitor::start()
+void WmpMonitor::start()
 {
 	std::lock_guard lock(mutex_);
 	if (started_)
@@ -357,10 +548,10 @@ void SmtcMonitor::start()
 
 	stop_requested_ = false;
 	started_ = true;
-	worker_ = std::thread(&SmtcMonitor::run, this);
+	worker_ = std::thread(&WmpMonitor::run, this);
 }
 
-void SmtcMonitor::stop()
+void WmpMonitor::stop()
 {
 	{
 		std::lock_guard lock(mutex_);
@@ -378,7 +569,7 @@ void SmtcMonitor::stop()
 	started_ = false;
 }
 
-void SmtcMonitor::configure(std::string app_filter, uint32_t refresh_ms)
+void WmpMonitor::configure(std::string app_filter, uint32_t refresh_ms)
 {
 	{
 		std::lock_guard lock(mutex_);
@@ -389,7 +580,7 @@ void SmtcMonitor::configure(std::string app_filter, uint32_t refresh_ms)
 	wake_.notify_all();
 }
 
-MediaState SmtcMonitor::snapshot() const
+MediaState WmpMonitor::snapshot() const
 {
 	std::lock_guard lock(mutex_);
 	return state_;
@@ -399,9 +590,13 @@ MediaState SmtcMonitor::snapshot() const
  *  Worker thread: dedicated STA apartment for COM calls
  * =================================================================== */
 
-void SmtcMonitor::run()
+void WmpMonitor::run()
 {
-	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+	/* OleInitialize is needed instead of CoInitializeEx because we
+	   use OLE embedding interfaces (IOleClientSite, OleRun, etc.) */
+	OleInitialize(nullptr);
+
+	WmpConnection conn;
 
 	for (;;) {
 		uint32_t refresh_ms = 1000;
@@ -416,15 +611,18 @@ void SmtcMonitor::run()
 		MediaState next_state;
 
 		try {
-			next_state = capture_wmp_com_state();
+			next_state = capture_wmp_com_state(conn);
 		} catch (const _com_error &err) {
 			next_state =
 				unavailable_state(tchar_to_utf8(err.ErrorMessage()));
+			conn.close();
 		} catch (const std::exception &err) {
 			next_state = unavailable_state(err.what());
+			conn.close();
 		} catch (...) {
 			next_state =
 				unavailable_state("Unknown error in WMP COM polling");
+			conn.close();
 		}
 
 		{
@@ -439,7 +637,9 @@ void SmtcMonitor::run()
 			break;
 	}
 
-	CoUninitialize();
+	/* Clean up the persistent connection before COM teardown */
+	conn.close();
+	OleUninitialize();
 }
 
 /* ===================================================================

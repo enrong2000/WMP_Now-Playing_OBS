@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PLUGIN_NAME: obs-wmp-smtc
+  PLUGIN_NAME: obs-wmp-legacy
   DEFAULT_OBS_VERSION: "32.1.2"
 
 jobs:
@@ -62,7 +62,7 @@ jobs:
           } else {
             $ProjectVersion = Select-String `
               -Path CMakeLists.txt `
-              -Pattern 'project\(obs-wmp-smtc VERSION ([0-9]+\.[0-9]+\.[0-9]+)' |
+              -Pattern 'project\(obs-wmp-legacy VERSION ([0-9]+\.[0-9]+\.[0-9]+)' |
               ForEach-Object { $_.Matches[0].Groups[1].Value } |
               Select-Object -First 1
             if ([string]::IsNullOrWhiteSpace($ProjectVersion)) {

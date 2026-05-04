@@ -1,6 +1,6 @@
 #include "wmp_source.hpp"
 
-#include "smtc_monitor.hpp"
+#include "wmp_monitor.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -30,7 +30,7 @@ std::string default_json_path()
 					       &appdata)) &&
 	    appdata) {
 		std::filesystem::path dir =
-			std::filesystem::path(appdata) / L"obs-wmp-smtc";
+			std::filesystem::path(appdata) / L"obs-wmp-legacy";
 		CoTaskMemFree(appdata);
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
@@ -42,7 +42,7 @@ std::string default_json_path()
 struct SourceContext {
 	obs_source_t *source = nullptr;
 	obs_source_t *text_source = nullptr;
-	SmtcMonitor monitor;
+	WmpMonitor monitor;
 	std::string app_filter = "wmplayer";
 	std::string format = kDefaultFormat;
 	bool hide_when_empty = false;
@@ -349,15 +349,15 @@ obs_source_t *create_text_source()
 	obs_data_set_string(settings, "text", "");
 
 	obs_source_t *source = obs_source_create_private(
-		"text_gdiplus_v2", "obs-wmp-smtc internal text", settings);
+		"text_gdiplus_v2", "obs-wmp-legacy internal text", settings);
 	if (!source) {
 		source = obs_source_create_private(
-			"text_gdiplus", "obs-wmp-smtc internal text", settings);
+			"text_gdiplus", "obs-wmp-legacy internal text", settings);
 	}
 
 	if (!source) {
 		blog(LOG_WARNING,
-		     "[obs-wmp-smtc] OBS Windows text source is unavailable");
+		     "[obs-wmp-legacy] OBS Windows text source is unavailable");
 	}
 
 	obs_data_release(settings);
@@ -377,7 +377,7 @@ void update_text_source(SourceContext *context, const std::string &text)
 
 const char *source_get_name(void *)
 {
-	return "WMP Legacy Now Playing (COM)";
+	return "Windows Media Player (Legacy) Now Playing";
 }
 
 void source_get_defaults(obs_data_t *settings)
@@ -523,7 +523,7 @@ uint32_t source_get_height(void *data)
 
 obs_source_info wmp_source_info = [] {
 	obs_source_info info = {};
-	info.id = "obs_wmp_smtc_source";
+	info.id = "obs_wmp_legacy_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW;
 	info.get_name = source_get_name;

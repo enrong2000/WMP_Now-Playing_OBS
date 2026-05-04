@@ -52,13 +52,13 @@ struct MediaState {
 	int current_playlist_index = -1;
 };
 
-class SmtcMonitor {
+class WmpMonitor {
 public:
-	SmtcMonitor() = default;
-	~SmtcMonitor();
+	WmpMonitor() = default;
+	~WmpMonitor();
 
-	SmtcMonitor(const SmtcMonitor &) = delete;
-	SmtcMonitor &operator=(const SmtcMonitor &) = delete;
+	WmpMonitor(const WmpMonitor &) = delete;
+	WmpMonitor &operator=(const WmpMonitor &) = delete;
 
 	void start();
 	void stop();
