@@ -46,3 +46,11 @@ install(TARGETS obs-wmp-legacy
 install(TARGETS wmp_bridge
   RUNTIME DESTINATION obs-plugins/64bit
 )
+
+install(DIRECTORY overlay/
+  DESTINATION data/obs-plugins/obs-wmp-legacy/overlay
+)
+
+install(DIRECTORY data/locale/
+  DESTINATION data/obs-plugins/obs-wmp-legacy/locale
+)

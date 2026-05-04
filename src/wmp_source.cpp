@@ -134,10 +134,24 @@ std::string url_encode(std::string_view value, bool path_component)
 	return out.str();
 }
 
-std::string file_url_from_path(std::string path)
+/**
+ * Build an http://absolute/<path> URL that mirrors OBS Browser
+ * Source's internal local-file scheme handler.  This lets CEF
+ * treat the page as a same-origin http resource so it can
+ * fetch other local files (e.g. now-playing.json, style.css)
+ * without being blocked by file:// CORS restrictions.
+ */
+std::string http_absolute_url_from_path(std::string path)
 {
 	if (path.empty())
 		return {};
+
+	/* Canonicalize to an absolute path */
+	std::error_code ec;
+	std::filesystem::path canonical =
+		std::filesystem::weakly_canonical(path, ec);
+	if (!ec)
+		path = canonical.string();
 
 	for (auto &ch : path) {
 		if (ch == '\\')
@@ -147,7 +161,7 @@ std::string file_url_from_path(std::string path)
 	while (!path.empty() && path.front() == '/')
 		path.erase(path.begin());
 
-	return "file:///" + url_encode(path, true);
+	return "http://absolute/" + url_encode(path, true);
 }
 
 std::string overlay_mode_query_value(int mode)
@@ -158,7 +172,7 @@ std::string overlay_mode_query_value(int mode)
 std::string build_overlay_url(const std::string &local_html,
 			      const SourceContext &context)
 {
-	std::string url = file_url_from_path(local_html);
+	std::string url = http_absolute_url_from_path(local_html);
 	if (url.empty())
 		return {};
 
@@ -503,21 +517,21 @@ obs_source_t *create_text_source()
 	obs_data_t *font = obs_data_create();
 
 	obs_data_set_string(settings, "text", "");
-	obs_data_set_string(font, "face", "Segoe UI Semibold");
+	obs_data_set_string(font, "face", "Segoe UI");
 	obs_data_set_int(font, "size", 30);
-	obs_data_set_int(font, "flags", OBS_FONT_BOLD);
+	obs_data_set_int(font, "flags", 0);
 	obs_data_set_obj(settings, "font", font);
-	obs_data_set_int(settings, "color", 0xF6FAFF);
+	obs_data_set_int(settings, "color", 0xCDD3D8);
 	obs_data_set_bool(settings, "gradient", true);
-	obs_data_set_int(settings, "gradient_color", 0x7CE0C3);
+	obs_data_set_int(settings, "gradient_color", 0x6AAC94);
 	obs_data_set_int(settings, "gradient_opacity", 100);
 	obs_data_set_double(settings, "gradient_dir", 90.0);
 	obs_data_set_int(settings, "bk_color", 0x101418);
 	obs_data_set_int(settings, "bk_opacity", 72);
 	obs_data_set_bool(settings, "outline", true);
-	obs_data_set_int(settings, "outline_size", 2);
+	obs_data_set_int(settings, "outline_size", 1);
 	obs_data_set_int(settings, "outline_color", 0x0B0F12);
-	obs_data_set_int(settings, "outline_opacity", 80);
+	obs_data_set_int(settings, "outline_opacity", 60);
 	obs_data_release(font);
 
 	obs_source_t *source = obs_source_create_private(
@@ -543,10 +557,25 @@ obs_source_t *create_text_source()
 std::string find_overlay_html_path()
 {
 	char *path = obs_module_file("overlay/index.html");
-	if (!path)
+	if (!path) {
+		blog(LOG_WARNING,
+		     "[obs-wmp-legacy] obs_module_file(\"overlay/index.html\") "
+		     "returned null; overlay data may not be installed");
 		return {};
+	}
 	std::string result(path);
 	bfree(path);
+
+	/* Verify the file actually exists on disk */
+	std::error_code ec;
+	if (!std::filesystem::exists(result, ec)) {
+		blog(LOG_WARNING,
+		     "[obs-wmp-legacy] overlay HTML path does not exist: %s",
+		     result.c_str());
+	}
+
+	blog(LOG_INFO, "[obs-wmp-legacy] overlay HTML path: %s",
+	     result.c_str());
 	return result;
 }
 
@@ -570,6 +599,11 @@ obs_source_t *create_browser_source(int width, int height,
 		return nullptr;
 	}
 
+	blog(LOG_INFO,
+	     "[obs-wmp-legacy] creating embedded browser source, "
+	     "url=%s  width=%d  height=%d",
+	     overlay_url.c_str(), width, height);
+
 	obs_data_t *settings = obs_data_create();
 	obs_data_set_bool(settings, "is_local_file", false);
 	obs_data_set_string(settings, "url", overlay_url.c_str());
@@ -589,6 +623,10 @@ obs_source_t *create_browser_source(int width, int height,
 		blog(LOG_WARNING,
 		     "[obs-wmp-legacy] OBS Browser Source is unavailable; "
 		     "ensure the obs-browser plugin is installed");
+	} else {
+		blog(LOG_INFO,
+		     "[obs-wmp-legacy] embedded browser source created "
+		     "successfully");
 	}
 
 	obs_data_release(settings);
@@ -926,8 +964,14 @@ void ensure_active_source(SourceContext *context)
 	if (context->display_mode == kDisplayModeEmbeddedOverlay) {
 		/* Embedded Overlay (browser source) */
 		if (!context->browser_source) {
-			context->browser_url = build_overlay_url(
-				find_overlay_html_path(), *context);
+			const std::string html_path = find_overlay_html_path();
+			context->browser_url =
+				build_overlay_url(html_path, *context);
+
+			blog(LOG_INFO,
+			     "[obs-wmp-legacy] embedded overlay URL: %s",
+			     context->browser_url.c_str());
+
 			context->browser_source = create_browser_source(
 				effective_overlay_width(*context),
 				effective_overlay_height(*context),
