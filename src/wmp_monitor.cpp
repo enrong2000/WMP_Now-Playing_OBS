@@ -446,7 +446,7 @@ static bool wait_for_output_file(const std::string &path,
 				f.seekg(-2, std::ios::end);
 				char tail[2] = {};
 				f.read(tail, 2);
-				if (tail[1] == '\n' || tail[0] == '}')
+				if (tail[0] == '}' && tail[1] == '\n')
 					return true;
 			}
 		}
