@@ -5,9 +5,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <obs-module.h>
 #include <sstream>
 #include <string>
@@ -22,6 +24,12 @@ constexpr const char *kDefaultFormat =
 	"{artist} - {title}\n"
 	"{album}\n"
 	"{position} / {duration} {progress_bar} {status}";
+
+constexpr int kDisplayModeTemplateText = 0;
+constexpr int kDisplayModeUiCardText = 1;
+constexpr int kDisplayModeEmbeddedOverlay = 2;
+constexpr int kOverlayModeMinimized = 0;
+constexpr int kOverlayModeMaximized = 1;
 
 std::string default_json_path()
 {
@@ -43,17 +51,21 @@ struct SourceContext {
 	obs_source_t *source = nullptr;
 	obs_source_t *text_source = nullptr;
 	obs_source_t *browser_source = nullptr;
+	obs_source_t *active_child = nullptr;
 	WmpMonitor monitor;
 	std::string app_filter = "wmplayer";
 	std::string format = kDefaultFormat;
 	bool hide_when_empty = false;
-	int display_mode = 0;
+	int display_mode = kDisplayModeEmbeddedOverlay;
+	int overlay_work_mode = kOverlayModeMinimized;
 	bool show_composer = true;
 	bool show_full_playlist = true;
 	uint32_t refresh_ms = 1000;
 	int progress_width = 24;
-	int overlay_width = 520;
-	int overlay_height = 260;
+	int overlay_width = 1120;
+	int overlay_height = 460;
+	int upcoming_tracks = 3;
+	int compact_playlist_reveal_ms = 3000;
 	float update_elapsed = 0.0f;
 	std::string last_text;
 	std::string json_output_path;
@@ -75,6 +87,65 @@ void replace_all(std::string &value, std::string_view token,
 		value.replace(offset, token.size(), replacement);
 		offset += replacement.size();
 	}
+}
+
+std::string url_encode(std::string_view value, bool path_component)
+{
+	std::ostringstream out;
+	out << std::uppercase << std::hex;
+
+	for (const unsigned char ch : value) {
+		const bool unreserved = std::isalnum(ch) || ch == '-' ||
+					ch == '_' || ch == '.' || ch == '~';
+		const bool path_safe = path_component &&
+				       (ch == '/' || ch == ':');
+
+		if (unreserved || path_safe) {
+			out << static_cast<char>(ch);
+		} else {
+			out << '%' << std::setw(2) << std::setfill('0')
+			    << static_cast<int>(ch);
+		}
+	}
+
+	return out.str();
+}
+
+std::string file_url_from_path(std::string path)
+{
+	if (path.empty())
+		return {};
+
+	for (auto &ch : path) {
+		if (ch == '\\')
+			ch = '/';
+	}
+
+	while (!path.empty() && path.front() == '/')
+		path.erase(path.begin());
+
+	return "file:///" + url_encode(path, true);
+}
+
+std::string overlay_mode_query_value(int mode)
+{
+	return mode == kOverlayModeMaximized ? "maximized" : "minimized";
+}
+
+std::string build_overlay_url(const std::string &local_html,
+			      const SourceContext &context)
+{
+	std::string url = file_url_from_path(local_html);
+	if (url.empty())
+		return {};
+
+	url += "?json=" + url_encode(context.json_output_path, false);
+	url += "&mode=" + std::string(overlay_mode_query_value(
+				  context.overlay_work_mode));
+	url += "&upcoming=" + std::to_string(context.upcoming_tracks);
+	url += "&reveal_ms=" +
+	       std::to_string(context.compact_playlist_reveal_ms);
+	return url;
 }
 
 std::string format_time(int64_t ms)
@@ -247,7 +318,7 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	std::ostringstream percent;
 	percent << static_cast<int>(std::llround(ratio * 100.0)) << '%';
 
-	if (context.display_mode == 1 && state.available)
+	if (context.display_mode == kDisplayModeUiCardText && state.available)
 		return render_ui_card_text(context, state, relative_position,
 					   duration, ratio, percent.str());
 
@@ -460,15 +531,16 @@ std::string find_overlay_html_path()
  * Create a private OBS Browser Source that loads the bundled
  * Now-Playing overlay HTML.  This lets the user add a single
  * OBS source that displays the rich glassmorphism overlay
- * directly — no second Browser Source required.
+ * directly - no second Browser Source required.
  *
- * The overlay JS picks up the JSON path via the sibling
- * config.json file (written by write_overlay_config()).
+ * The overlay URL carries the JSON path and UI mode as query
+ * parameters so it does not depend on a writable config.json
+ * next to the installed HTML.
  */
 obs_source_t *create_browser_source(int width, int height,
-				    const std::string &local_html)
+				    const std::string &overlay_url)
 {
-	if (local_html.empty()) {
+	if (overlay_url.empty()) {
 		blog(LOG_WARNING,
 		     "[obs-wmp-legacy] overlay/index.html not found in plugin "
 		     "data directory; embedded overlay unavailable");
@@ -476,8 +548,8 @@ obs_source_t *create_browser_source(int width, int height,
 	}
 
 	obs_data_t *settings = obs_data_create();
-	obs_data_set_bool(settings, "is_local_file", true);
-	obs_data_set_string(settings, "local_file", local_html.c_str());
+	obs_data_set_bool(settings, "is_local_file", false);
+	obs_data_set_string(settings, "url", overlay_url.c_str());
 	obs_data_set_int(settings, "width", width);
 	obs_data_set_int(settings, "height", height);
 	obs_data_set_int(settings, "fps", 30);
@@ -501,13 +573,17 @@ obs_source_t *create_browser_source(int width, int height,
 }
 
 /**
- * Update the embedded browser source's dimensions in place.
+ * Update the embedded browser source's URL and dimensions in place.
  */
-void update_browser_source_size(obs_source_t *browser, int width, int height)
+void update_browser_source_settings(obs_source_t *browser, int width, int height,
+				    const std::string &overlay_url)
 {
 	if (!browser)
 		return;
 	obs_data_t *settings = obs_data_create();
+	obs_data_set_bool(settings, "is_local_file", false);
+	if (!overlay_url.empty())
+		obs_data_set_string(settings, "url", overlay_url.c_str());
 	obs_data_set_int(settings, "width", width);
 	obs_data_set_int(settings, "height", height);
 	obs_source_update(browser, settings);
@@ -532,6 +608,45 @@ void browser_refresh_no_cache(obs_source_t *browser)
 	calldata_free(&cd);
 }
 
+void set_active_child(SourceContext *context, obs_source_t *child)
+{
+	if (!context || context->active_child == child)
+		return;
+
+	if (context->source && context->active_child)
+		obs_source_remove_active_child(context->source,
+					       context->active_child);
+	context->active_child = nullptr;
+
+	if (!context->source || !child)
+		return;
+
+	if (obs_source_add_active_child(context->source, child)) {
+		context->active_child = child;
+	} else {
+		blog(LOG_WARNING,
+		     "[obs-wmp-legacy] failed to activate child source");
+	}
+}
+
+void refresh_browser_source(SourceContext *context, bool force)
+{
+	if (!context || !context->browser_source)
+		return;
+
+	const std::string overlay_url =
+		build_overlay_url(find_overlay_html_path(), *context);
+	const bool url_changed = overlay_url != context->browser_url;
+	if (!force && !url_changed)
+		return;
+
+	update_browser_source_settings(context->browser_source,
+				       context->overlay_width,
+				       context->overlay_height, overlay_url);
+	context->browser_url = overlay_url;
+	browser_refresh_no_cache(context->browser_source);
+}
+
 void update_text_source(SourceContext *context, const std::string &text)
 {
 	if (!context->text_source)
@@ -548,8 +663,10 @@ const char *source_get_name(void *)
 	return "Windows Media Player (Legacy) Now Playing";
 }
 
-/* Forward declaration — defined below; called by source_update. */
+/* Forward declaration - defined below; called by source_update. */
 void ensure_active_source(SourceContext *context);
+void write_overlay_config(const SourceContext &context);
+void log_overlay_url(const SourceContext &context);
 
 void source_get_defaults(obs_data_t *settings)
 {
@@ -559,9 +676,14 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "refresh_ms", 500);
 	obs_data_set_default_int(settings, "progress_width", 24);
 	/* Default to the new single-source Embedded Overlay mode */
-	obs_data_set_default_int(settings, "display_mode", 2);
-	obs_data_set_default_int(settings, "overlay_width", 520);
-	obs_data_set_default_int(settings, "overlay_height", 260);
+	obs_data_set_default_int(settings, "display_mode",
+				 kDisplayModeEmbeddedOverlay);
+	obs_data_set_default_int(settings, "overlay_work_mode",
+				 kOverlayModeMinimized);
+	obs_data_set_default_int(settings, "overlay_width", 1120);
+	obs_data_set_default_int(settings, "overlay_height", 460);
+	obs_data_set_default_int(settings, "upcoming_tracks", 3);
+	obs_data_set_default_int(settings, "compact_playlist_reveal_ms", 3000);
 	obs_data_set_default_bool(settings, "show_composer", true);
 	obs_data_set_default_bool(settings, "show_full_playlist", true);
 	obs_data_set_default_string(settings, "json_output_path",
@@ -578,14 +700,30 @@ obs_properties_t *source_get_properties(void *)
 	obs_property_t *display_mode_list = obs_properties_add_list(
 		props, "display_mode", "Display mode",
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(display_mode_list, "Embedded Overlay", 2);
-	obs_property_list_add_int(display_mode_list, "Template Text", 0);
-	obs_property_list_add_int(display_mode_list, "UI Card (Text)", 1);
+	obs_property_list_add_int(display_mode_list, "Embedded Overlay",
+				  kDisplayModeEmbeddedOverlay);
+	obs_property_list_add_int(display_mode_list, "Template Text",
+				  kDisplayModeTemplateText);
+	obs_property_list_add_int(display_mode_list, "UI Card (Text)",
+				  kDisplayModeUiCardText);
+
+	obs_property_t *overlay_mode_list = obs_properties_add_list(
+		props, "overlay_work_mode", "Overlay work mode",
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(overlay_mode_list, "Minimized Window",
+				  kOverlayModeMinimized);
+	obs_property_list_add_int(overlay_mode_list, "Maximized Window",
+				  kOverlayModeMaximized);
 
 	obs_properties_add_int(props, "overlay_width",
 			       "Embedded overlay width (px)", 200, 4096, 10);
 	obs_properties_add_int(props, "overlay_height",
 			       "Embedded overlay height (px)", 100, 4096, 10);
+	obs_properties_add_int_slider(props, "upcoming_tracks",
+				      "Upcoming tracks", 0, 10, 1);
+	obs_properties_add_int_slider(props, "compact_playlist_reveal_ms",
+				      "Compact playlist reveal (ms)", 0,
+				      10000, 250);
 
 	obs_properties_add_text(props, "format", "Format",
 				OBS_TEXT_MULTILINE);
@@ -611,6 +749,13 @@ void source_update(void *data, obs_data_t *settings)
 {
 	auto *context = static_cast<SourceContext *>(data);
 
+	const std::string old_json_path = context->json_output_path;
+	const int old_display_mode = context->display_mode;
+	const int old_overlay_work_mode = context->overlay_work_mode;
+	const int old_upcoming_tracks = context->upcoming_tracks;
+	const int old_compact_reveal_ms =
+		context->compact_playlist_reveal_ms;
+
 	context->app_filter = obs_data_get_string(settings, "app_filter");
 	context->format = obs_data_get_string(settings, "format");
 	context->hide_when_empty =
@@ -621,11 +766,21 @@ void source_update(void *data, obs_data_t *settings)
 		static_cast<int>(obs_data_get_int(settings, "progress_width"));
 	const int new_display_mode =
 		static_cast<int>(obs_data_get_int(settings, "display_mode"));
+	const int new_overlay_work_mode =
+		static_cast<int>(obs_data_get_int(settings,
+						  "overlay_work_mode"));
 	const int new_w = std::max<int>(
 		1, static_cast<int>(obs_data_get_int(settings, "overlay_width")));
 	const int new_h = std::max<int>(
 		1,
 		static_cast<int>(obs_data_get_int(settings, "overlay_height")));
+	context->upcoming_tracks = std::clamp<int>(
+		static_cast<int>(obs_data_get_int(settings, "upcoming_tracks")),
+		0, 10);
+	context->compact_playlist_reveal_ms = std::clamp<int>(
+		static_cast<int>(obs_data_get_int(
+			settings, "compact_playlist_reveal_ms")),
+		0, 10000);
 	context->show_composer = obs_data_get_bool(settings, "show_composer");
 	context->show_full_playlist =
 		obs_data_get_bool(settings, "show_full_playlist");
@@ -643,30 +798,49 @@ void source_update(void *data, obs_data_t *settings)
 	context->overlay_width = new_w;
 	context->overlay_height = new_h;
 
-	const bool mode_changed = (new_display_mode != context->display_mode);
 	context->display_mode = new_display_mode;
+	context->overlay_work_mode =
+		new_overlay_work_mode == kOverlayModeMaximized
+			? kOverlayModeMaximized
+			: kOverlayModeMinimized;
+
+	const bool mode_changed = new_display_mode != old_display_mode;
+	const bool overlay_settings_changed =
+		context->json_output_path != old_json_path ||
+		context->overlay_work_mode != old_overlay_work_mode ||
+		context->upcoming_tracks != old_upcoming_tracks ||
+		context->compact_playlist_reveal_ms != old_compact_reveal_ms;
+
+	write_overlay_config(*context);
+	ensure_active_source(context);
 
 	/* Live propagation of size changes to embedded browser. */
-	if (context->browser_source && size_changed && !mode_changed)
-		update_browser_source_size(context->browser_source,
-					   context->overlay_width,
-					   context->overlay_height);
-
-	if (mode_changed)
-		ensure_active_source(context);
+	if (context->display_mode == kDisplayModeEmbeddedOverlay &&
+	    context->browser_source &&
+	    (size_changed || mode_changed || overlay_settings_changed))
+		refresh_browser_source(context, true);
 
 	context->monitor.configure(context->app_filter, context->refresh_ms);
 	context->last_text.clear();
 }
 
-void write_overlay_config(const std::string &json_path)
+void write_overlay_config(const SourceContext &context)
 {
-	if (json_path.empty())
+	if (context.json_output_path.empty())
 		return;
 
-	std::string json_content = "{\n"
-		"  \"jsonPath\": \"" + escape_json(json_path) + "\"\n"
-		"}\n";
+	std::ostringstream json;
+	json << "{\n";
+	json << "  \"jsonPath\": \"" << escape_json(context.json_output_path)
+	     << "\",\n";
+	json << "  \"mode\": \""
+	     << overlay_mode_query_value(context.overlay_work_mode)
+	     << "\",\n";
+	json << "  \"upcomingTracks\": " << context.upcoming_tracks << ",\n";
+	json << "  \"compactRevealMs\": "
+	     << context.compact_playlist_reveal_ms << "\n";
+	json << "}\n";
+	const std::string json_content = json.str();
 
 	/* 1. Write to the OBS plugin config directory (always writable) */
 	char *config_dir = obs_module_config_path("");
@@ -696,39 +870,21 @@ void write_overlay_config(const std::string &json_path)
  * Log the complete overlay URL with ?json= query parameter
  * for easy configuration of the OBS browser source.
  */
-void log_overlay_url(const std::string &json_path)
+void log_overlay_url(const SourceContext &context)
 {
-	/* Find the overlay HTML file */
-	char *overlay_path = obs_module_file("overlay/index.html");
-	if (!overlay_path)
+	const std::string overlay_url =
+		build_overlay_url(find_overlay_html_path(), context);
+	if (overlay_url.empty())
 		return;
-
-	std::string overlay_str(overlay_path);
-	bfree(overlay_path);
-
-	/* Convert backslashes to forward slashes for URL */
-	std::string url_path = overlay_str;
-	for (auto &ch : url_path) {
-		if (ch == '\\')
-			ch = '/';
-	}
-
-	std::string json_url = json_path;
-	for (auto &ch : json_url) {
-		if (ch == '\\')
-			ch = '/';
-	}
 
 	blog(LOG_INFO,
 	     "[obs-wmp-legacy] ========================================");
 	blog(LOG_INFO,
 	     "[obs-wmp-legacy] For the 'Now Playing' browser source, use:");
-	blog(LOG_INFO,
-	     "[obs-wmp-legacy]   %s?json=%s",
-	     url_path.c_str(), json_url.c_str());
+	blog(LOG_INFO, "[obs-wmp-legacy]   %s", overlay_url.c_str());
 	blog(LOG_INFO,
 	     "[obs-wmp-legacy] JSON output path: %s",
-	     json_path.c_str());
+	     context.json_output_path.c_str());
 	blog(LOG_INFO,
 	     "[obs-wmp-legacy] ========================================");
 }
@@ -741,18 +897,22 @@ void log_overlay_url(const std::string &json_path)
  */
 void ensure_active_source(SourceContext *context)
 {
-	if (context->display_mode == 2) {
+	if (context->display_mode == kDisplayModeEmbeddedOverlay) {
 		/* Embedded Overlay (browser source) */
 		if (!context->browser_source) {
+			context->browser_url = build_overlay_url(
+				find_overlay_html_path(), *context);
 			context->browser_source = create_browser_source(
 				context->overlay_width,
 				context->overlay_height,
-				find_overlay_html_path());
+				context->browser_url);
 		}
+		set_active_child(context, context->browser_source);
 	} else {
 		/* Template Text / UI Card (text source) */
 		if (!context->text_source)
 			context->text_source = create_text_source();
+		set_active_child(context, context->text_source);
 	}
 }
 
@@ -762,12 +922,7 @@ void *source_create(obs_data_t *settings, obs_source_t *source)
 	context->source = source;
 
 	source_update(context, settings);
-	write_overlay_config(context->json_output_path);
-	log_overlay_url(context->json_output_path);
-	ensure_active_source(context);
-	/* Force the embedded browser to reload after config.json has
-	   been (re)written, so it picks up the latest jsonUrl. */
-	browser_refresh_no_cache(context->browser_source);
+	log_overlay_url(*context);
 	context->monitor.start();
 
 	return context;
@@ -777,6 +932,7 @@ void source_destroy(void *data)
 {
 	auto *context = static_cast<SourceContext *>(data);
 	context->monitor.stop();
+	set_active_child(context, nullptr);
 
 	if (context->text_source)
 		obs_source_release(context->text_source);
@@ -798,7 +954,7 @@ void source_video_tick(void *data, float seconds)
 
 	const auto state = context->monitor.snapshot();
 
-	/* Always write JSON — the embedded overlay (and any external
+	/* Always write JSON - the embedded overlay (and any external
 	   consumer) relies on it. */
 	write_json_file(*context, state);
 
@@ -806,7 +962,7 @@ void source_video_tick(void *data, float seconds)
 	   source.  In Embedded Overlay mode the browser source picks
 	   up changes by polling the JSON file directly, so there is
 	   no separate text-render step. */
-	if (context->display_mode == 2)
+	if (context->display_mode == kDisplayModeEmbeddedOverlay)
 		return;
 
 	const auto text = render_text(*context, state);
@@ -821,7 +977,7 @@ void source_video_render(void *data, gs_effect_t *)
 {
 	auto *context = static_cast<SourceContext *>(data);
 
-	if (context->display_mode == 2) {
+	if (context->display_mode == kDisplayModeEmbeddedOverlay) {
 		if (context->browser_source)
 			obs_source_video_render(context->browser_source);
 		return;
@@ -837,9 +993,13 @@ uint32_t source_get_width(void *data)
 {
 	const auto *context = static_cast<SourceContext *>(data);
 
-	if (context->display_mode == 2) {
-		if (context->browser_source)
-			return obs_source_get_width(context->browser_source);
+	if (context->display_mode == kDisplayModeEmbeddedOverlay) {
+		if (context->browser_source) {
+			const uint32_t width =
+				obs_source_get_width(context->browser_source);
+			if (width > 0)
+				return width;
+		}
 		return static_cast<uint32_t>(std::max(1, context->overlay_width));
 	}
 
@@ -851,14 +1011,30 @@ uint32_t source_get_height(void *data)
 {
 	const auto *context = static_cast<SourceContext *>(data);
 
-	if (context->display_mode == 2) {
-		if (context->browser_source)
-			return obs_source_get_height(context->browser_source);
+	if (context->display_mode == kDisplayModeEmbeddedOverlay) {
+		if (context->browser_source) {
+			const uint32_t height =
+				obs_source_get_height(context->browser_source);
+			if (height > 0)
+				return height;
+		}
 		return static_cast<uint32_t>(std::max(1, context->overlay_height));
 	}
 
 	return context->text_source ? obs_source_get_height(context->text_source)
 				    : 0;
+}
+
+void source_enum_active_sources(void *data,
+				obs_source_enum_proc_t enum_callback,
+				void *param)
+{
+	const auto *context = static_cast<SourceContext *>(data);
+	if (!context || !context->source || !enum_callback ||
+	    !context->active_child)
+		return;
+
+	enum_callback(context->source, context->active_child, param);
 }
 
 } // namespace
@@ -867,7 +1043,8 @@ obs_source_info wmp_source_info = [] {
 	obs_source_info info = {};
 	info.id = "obs_wmp_legacy_source";
 	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW;
+	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
+			    OBS_SOURCE_COMPOSITE;
 	info.get_name = source_get_name;
 	info.create = source_create;
 	info.destroy = source_destroy;
@@ -878,6 +1055,7 @@ obs_source_info wmp_source_info = [] {
 	info.video_tick = source_video_tick;
 	info.get_width = source_get_width;
 	info.get_height = source_get_height;
+	info.enum_active_sources = source_enum_active_sources;
 	return info;
 }();
 

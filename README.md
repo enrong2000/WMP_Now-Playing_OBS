@@ -9,7 +9,7 @@ OBS Studio source plugin that displays now-playing metadata from **Windows Media
 - Registers an OBS input source named **Windows Media Player (Legacy) Now Playing**.
 - Connects to a running `wmplayer.exe` instance using COM (`IWMPRemoteMediaServices` remote mode).
 - Reads title, artist, album, album artist, composer, playback state, position, duration, and the full playlist.
-- Renders the **rich glassmorphism Now-Playing overlay directly inside the OBS source** via an embedded private Browser Source — **no separate Browser Source required**.
+- Renders the **rich glassmorphism Now-Playing overlay directly inside the OBS source** via an embedded private Browser Source. **No separate Browser Source is required.**
 - Also writes real-time media state to a JSON file for use by external overlays / consumers.
 
 ## How It Works
@@ -39,6 +39,8 @@ The plugin detects elevation and de-elevates the bridge through a **three-tier f
 ## Now-Playing Overlay
 
 The rich Now-Playing overlay (glassmorphism design, animated EQ bars, gradient progress bar) is rendered **inside the plugin source itself** via an embedded private OBS Browser Source. You do **not** need to add a second Browser Source.
+
+The overlay can run as a compact minimized window (default) or as a larger maximized player. In maximized mode it shows the previous track and a configurable number of upcoming tracks from the current playlist. In minimized mode it briefly expands the current playlist when the track changes so viewers can see the current position in the queue.
 
 If you prefer text output, choose **Template Text** or **UI Card (Text)** under the source's *Display mode* setting.
 
@@ -102,6 +104,12 @@ If you want to use the overlay outside the plugin (e.g. on a separate Browser So
 
 and the JSON state is written to `%APPDATA%/obs-wmp-legacy/now-playing.json`. Pass `?json=PATH_TO_JSON` in the Browser Source URL or create a `config.json` next to `index.html` with `{"jsonUrl":"http://absolute/.../now-playing.json"}`.
 
+Optional URL/config values for external Browser Sources:
+
+- `mode=minimized|maximized`
+- `upcoming=3` or `{"upcomingTracks":3}`
+- `reveal_ms=3000` or `{"compactRevealMs":3000}`
+
 ## Build
 
 Requirements:
@@ -132,8 +140,11 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 | Setting | Description |
 |---------|-------------|
 | **App filter** | Substring to identify the WMP process. Default: `wmplayer`. |
-| **Display mode** | `Embedded Overlay` (rich Browser-Source overlay rendered inside the plugin source — default), `Template Text`, or `UI Card (Text)`. |
-| **Embedded overlay width/height** | Pixel dimensions of the embedded overlay (default 520x260). |
+| **Display mode** | `Embedded Overlay` (rich Browser-Source overlay rendered inside the plugin source; default), `Template Text`, or `UI Card (Text)`. |
+| **Overlay work mode** | `Minimized Window` (default compact layout) or `Maximized Window` (larger player with previous/upcoming tracks). |
+| **Embedded overlay width/height** | Pixel dimensions of the embedded overlay (default 1120x460, leaving room for minimized playlist reveal). |
+| **Upcoming tracks** | Number of tracks after the current one to show in the maximized playlist window. Default: 3. |
+| **Compact playlist reveal** | How long the minimized window expands the playlist after a track change. Default: 3000 ms. |
 | **Format** | Output template (used in Template Text mode). |
 | **Progress width** | Character width of `{progress_bar}`. |
 | **Show composer** | Display composer information in UI Card (Text) mode when available. |
@@ -165,6 +176,6 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 
 ### Display Modes
 
-- **Embedded Overlay** (default): rich glassmorphism Now-Playing panel rendered inside the source via an embedded private OBS Browser Source. No second source required.
+- **Embedded Overlay** (default): rich glassmorphism Now-Playing panel rendered inside the source via an embedded private OBS Browser Source. Supports minimized and maximized window layouts with no second source required.
 - **UI Card (Text)**: structured now-playing text panel with icons, composer, and playlist display.
 - **Template Text**: customizable token template mode for full control over output format.

@@ -7,63 +7,146 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main id="card" class="now-card waiting" aria-live="polite">
-    <div class="accent-line"></div>
-    <section class="mark-panel">
-      <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M18 33V12l18-4v21" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="14" cy="34" r="6" fill="none" stroke="currentColor" stroke-width="3"/>
-        <circle cx="32" cy="30" r="6" fill="none" stroke="currentColor" stroke-width="3"/>
-      </svg>
-      <div id="meter" class="meter" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
+  <main id="card" class="player-window mode-minimized waiting" aria-live="polite">
+    <header class="window-bar">
+      <h1>MUSIC PLAYER</h1>
+      <div class="window-actions" aria-hidden="true">
+        <span id="mode-action" class="window-icon plus"></span>
+        <span class="window-divider"></span>
+        <span class="window-icon close"></span>
+      </div>
+    </header>
+
+    <section class="now-panel">
+      <div class="panel-surface">
+        <div class="panel-top">
+          <div class="now-pill">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 18V5l10-2v13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="6.5" cy="18" r="3.2" fill="currentColor"/>
+              <circle cx="16.5" cy="16" r="3.2" fill="currentColor"/>
+            </svg>
+            <span>NOW PLAYING</span>
+          </div>
+          <div class="sound-mark" aria-hidden="true">
+            <svg class="speaker" viewBox="0 0 24 24">
+              <path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/>
+              <path d="M16 9c1.2 1.7 1.2 4.3 0 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <div class="bars">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="track-grid">
+          <div class="note-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <path d="M25 46V15l25-5v31" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="17" cy="47" r="8" fill="currentColor"/>
+              <circle cx="43" cy="42" r="8" fill="currentColor"/>
+            </svg>
+          </div>
+
+          <div class="track-copy">
+            <div id="title" class="track-title">Waiting for Windows Media Player</div>
+            <div id="artist" class="track-artist">Start playback in Windows Media Player Legacy.</div>
+            <div class="compact-time">
+              <span id="compact-current">--:--</span>
+              <span>/</span>
+              <span id="compact-duration">--:--</span>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-item composer-item">
+              <div class="meta-label">Composer</div>
+              <div id="composer" class="meta-value">--</div>
+            </div>
+            <div class="meta-separator"></div>
+            <div class="meta-item album-item">
+              <div class="meta-label">Album</div>
+              <div id="album" class="meta-value">--</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="progress-block">
+          <div class="progress-track">
+            <div id="progress-fill" class="progress-fill"></div>
+            <div id="progress-thumb" class="progress-thumb"></div>
+          </div>
+          <div class="time-row">
+            <span id="time-current">--:--</span>
+            <span id="time-duration">--:--</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="content">
-      <div class="status-row">
-        <span id="status-dot" class="status-dot"></span>
-        <span id="status-text" class="status-text">Waiting</span>
-        <span id="backend" class="backend">WMP Legacy</span>
+    <section id="playlist-panel" class="playlist-panel hidden">
+      <div class="playlist-head">
+        <span>CURRENT PLAYLIST</span>
+        <span id="playlist-count">0 tracks</span>
       </div>
 
-      <div class="title-wrap">
-        <div id="title" class="title">Waiting for Windows Media Player</div>
-      </div>
-      <div id="artist" class="artist">Start playback in Windows Media Player Legacy.</div>
-      <div id="album" class="album"></div>
+      <ol id="compact-list" class="compact-list"></ol>
 
-      <div class="progress-block">
-        <div class="progress-track">
-          <div id="progress-fill" class="progress-fill"></div>
-        </div>
-        <div class="time-row">
-          <span id="time-current">--:--</span>
-          <span id="time-duration">--:--</span>
-        </div>
-      </div>
+      <div class="expanded-list">
+        <article id="previous-card" class="song-card hidden">
+          <div class="song-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 9 12l9 6V6zM6 6h2v12H6z" fill="currentColor"/>
+            </svg>
+            <span>PREVIOUS</span>
+          </div>
+          <div class="song-row">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 18V5l10-2v13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="6.5" cy="18" r="3.2" fill="currentColor"/>
+              <circle cx="16.5" cy="16" r="3.2" fill="currentColor"/>
+            </svg>
+            <div>
+              <div id="previous-title" class="song-title"></div>
+              <div id="previous-artist" class="song-artist"></div>
+            </div>
+          </div>
+        </article>
 
-      <div id="queue" class="queue hidden">
-        <div class="queue-head">
-          <span>Queue</span>
-          <span id="queue-count">0 tracks</span>
-        </div>
-        <ol id="queue-list"></ol>
+        <section id="next-card" class="song-card hidden">
+          <div class="song-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6 6 9 6-9 6V6zM16 6h2v12h-2z" fill="currentColor"/>
+            </svg>
+            <span>NEXT</span>
+          </div>
+          <ol id="next-list" class="next-list"></ol>
+        </section>
       </div>
     </section>
+
+    <footer id="status-footer" class="status-footer">
+      <span class="info-dot" aria-hidden="true">i</span>
+      <span id="footer-text">Playing from your selected music source.</span>
+    </footer>
   </main>
 
   <script>
-    const CONFIG = {
+    const DEFAULTS = {
+      mode: 'minimized',
+      upcomingTracks: 3,
+      compactRevealMs: 3000,
       pollIntervalMs: 200,
       idleAfterMs: 4500,
     };
 
     const state = {
       jsonUrl: '',
+      mode: DEFAULTS.mode,
+      upcomingTracks: DEFAULTS.upcomingTracks,
+      compactRevealMs: DEFAULTS.compactRevealMs,
       currentData: null,
       lastPollTime: 0,
       lastPosition: 0,
@@ -71,24 +154,32 @@
       lastStatus: '',
       lastTrackKey: '',
       idleTimer: null,
+      revealTimer: null,
     };
 
     const els = {
       card: document.getElementById('card'),
+      modeAction: document.getElementById('mode-action'),
       title: document.getElementById('title'),
       artist: document.getElementById('artist'),
+      composer: document.getElementById('composer'),
       album: document.getElementById('album'),
-      backend: document.getElementById('backend'),
-      statusText: document.getElementById('status-text'),
       progressFill: document.getElementById('progress-fill'),
+      progressThumb: document.getElementById('progress-thumb'),
       timeCurrent: document.getElementById('time-current'),
       timeDuration: document.getElementById('time-duration'),
-      queue: document.getElementById('queue'),
-      queueList: document.getElementById('queue-list'),
-      queueCount: document.getElementById('queue-count'),
+      compactCurrent: document.getElementById('compact-current'),
+      compactDuration: document.getElementById('compact-duration'),
+      playlistPanel: document.getElementById('playlist-panel'),
+      playlistCount: document.getElementById('playlist-count'),
+      compactList: document.getElementById('compact-list'),
+      previousCard: document.getElementById('previous-card'),
+      previousTitle: document.getElementById('previous-title'),
+      previousArtist: document.getElementById('previous-artist'),
+      nextCard: document.getElementById('next-card'),
+      nextList: document.getElementById('next-list'),
+      footerText: document.getElementById('footer-text'),
     };
-
-    /* ---- URL helpers ---- */
 
     function isObsAbsoluteOrigin() {
       return window.location.protocol === 'http:' &&
@@ -122,29 +213,52 @@
       return `${url}${glue}t=${Date.now()}`;
     }
 
-    /* ---- JSON discovery ---- */
+    function clampNumber(value, min, max, fallback) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return fallback;
+      return Math.max(min, Math.min(max, Math.round(number)));
+    }
+
+    function normalizeMode(value) {
+      return String(value || '').toLowerCase() === 'maximized'
+        ? 'maximized'
+        : 'minimized';
+    }
+
+    function applyOverlaySettings(settings) {
+      state.mode = normalizeMode(settings.mode || state.mode);
+      state.upcomingTracks = clampNumber(
+        settings.upcomingTracks,
+        0,
+        10,
+        DEFAULTS.upcomingTracks
+      );
+      state.compactRevealMs = clampNumber(
+        settings.compactRevealMs,
+        0,
+        10000,
+        DEFAULTS.compactRevealMs
+      );
+
+      els.card.classList.toggle('mode-maximized', state.mode === 'maximized');
+      els.card.classList.toggle('mode-minimized', state.mode !== 'maximized');
+      els.modeAction.classList.toggle('minus', state.mode === 'maximized');
+      els.modeAction.classList.toggle('plus', state.mode !== 'maximized');
+    }
 
     async function probeJsonUrl(candidatePath) {
       const url = toBrowserUrl(candidatePath);
       if (!url) return '';
       try {
-        const r = await fetch(withCacheBust(url), { cache: 'no-store' });
-        if (r.ok) {
-          const data = await r.json();
-          if (typeof data === 'object' && 'available' in data) return url;
-        }
-      } catch (e) {}
+        const response = await fetch(withCacheBust(url), { cache: 'no-store' });
+        if (!response.ok) return '';
+        const data = await response.json();
+        if (typeof data === 'object' && 'available' in data) return url;
+      } catch (error) {}
       return '';
     }
 
     async function discoverJsonInObs() {
-      /* When running inside OBS browser (http://absolute/...) without
-         a config.json, try to find the now-playing.json by probing
-         the OBS plugin-config sidecar written by the C++ plugin, or
-         by probing well-known APPDATA paths.
-         
-         Supports non-standard profile locations (e.g., relocated via
-         Windows folder properties to E:\Documents and Settings\...) */
       if (!isObsAbsoluteOrigin()) return '';
 
       const pathMatch = window.location.pathname.match(/^\/([A-Za-z]:)\//);
@@ -152,7 +266,6 @@
       const jsonRelPath = 'AppData/Roaming/obs-wmp-legacy/now-playing.json';
       const pluginCfgRel = 'AppData/Roaming/obs-studio/plugin_config/obs-wmp-legacy/overlay-config.json';
 
-      /* 1. Check localStorage cache */
       const cached = localStorage.getItem('obs_wmp_json_url');
       if (cached) {
         const ok = await probeJsonUrl(cached);
@@ -160,30 +273,27 @@
         localStorage.removeItem('obs_wmp_json_url');
       }
 
-      /* 2. Extract username candidates from URL / referrer */
       const candidates = new Set();
       try {
         const loc = decodeURIComponent(window.location.pathname);
-        const m = loc.match(/\/([A-Za-z]:)\/Users\/([^/]+)\//i);
-        if (m) candidates.add(m[2]);
-      } catch (e) {}
+        const match = loc.match(/\/([A-Za-z]:)\/Users\/([^/]+)\//i);
+        if (match) candidates.add(match[2]);
+      } catch (error) {}
       try {
         if (document.referrer) {
-          const m2 = decodeURIComponent(document.referrer).match(
+          const match = decodeURIComponent(document.referrer).match(
             /\/([A-Za-z]:)\/Users\/([^/]+)\//i
           );
-          if (m2) candidates.add(m2[2]);
+          if (match) candidates.add(match[2]);
         }
-      } catch (e) {}
+      } catch (error) {}
 
-      /* Collect all drives to probe (the drive from the URL + common drives) */
       const drives = new Set([drive]);
-      ['C:', 'D:', 'E:', 'F:'].forEach(d => drives.add(d));
+      ['C:', 'D:', 'E:', 'F:'].forEach((item) => drives.add(item));
 
-      /* 3. Probe each candidate username on each drive */
       for (const name of candidates) {
-        for (const d of drives) {
-          const path = `${d}/Users/${name}/${jsonRelPath}`;
+        for (const itemDrive of drives) {
+          const path = `${itemDrive}/Users/${name}/${jsonRelPath}`;
           const url = await probeJsonUrl(path);
           if (url) {
             localStorage.setItem('obs_wmp_json_url', path);
@@ -192,64 +302,47 @@
         }
       }
 
-      /* 4. Try the plugin-config sidecar on each drive for each candidate */
       for (const name of candidates) {
-        for (const d of drives) {
-          const cfgPath = `${d}/Users/${name}/${pluginCfgRel}`;
+        for (const itemDrive of drives) {
+          const cfgPath = `${itemDrive}/Users/${name}/${pluginCfgRel}`;
           const cfgUrl = toBrowserUrl(cfgPath);
           if (!cfgUrl) continue;
           try {
-            const r = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
-            if (r.ok) {
-              const cfg = await r.json();
-              const jp = cfg.jsonUrl || cfg.jsonPath || '';
-              if (jp) {
-                const url = toBrowserUrl(jp);
-                localStorage.setItem('obs_wmp_json_url', jp);
-                return url;
-              }
+            const response = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
+            if (!response.ok) continue;
+            const config = await response.json();
+            const jsonPath = config.jsonUrl || config.jsonPath || '';
+            if (jsonPath) {
+              localStorage.setItem('obs_wmp_json_url', jsonPath);
+              return toBrowserUrl(jsonPath);
             }
-          } catch (e) {}
+          } catch (error) {}
         }
       }
 
-      /* 5. Probe non-standard profile paths (Windows allows relocating
-            user folders to custom locations via folder Properties).
-            Common patterns include:
-              <drive>/Documents and Settings/AppData/Roaming/...
-              <drive>/UserData/AppData/Roaming/...
-         */
-      const nonStandardBases = [
-        'Documents and Settings',
-        'UserData',
-        'Profile',
-      ];
-      for (const d of drives) {
+      const nonStandardBases = ['Documents and Settings', 'UserData', 'Profile'];
+      for (const itemDrive of drives) {
         for (const base of nonStandardBases) {
-          /* Try the now-playing.json directly */
-          const directPath = `${d}/${base}/${jsonRelPath}`;
+          const directPath = `${itemDrive}/${base}/${jsonRelPath}`;
           const directUrl = await probeJsonUrl(directPath);
           if (directUrl) {
             localStorage.setItem('obs_wmp_json_url', directPath);
             return directUrl;
           }
 
-          /* Try the overlay-config.json sidecar */
-          const cfgPath = `${d}/${base}/${pluginCfgRel}`;
+          const cfgPath = `${itemDrive}/${base}/${pluginCfgRel}`;
           const cfgUrl = toBrowserUrl(cfgPath);
           if (!cfgUrl) continue;
           try {
-            const r = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
-            if (r.ok) {
-              const cfg = await r.json();
-              const jp = cfg.jsonUrl || cfg.jsonPath || '';
-              if (jp) {
-                const url = toBrowserUrl(jp);
-                localStorage.setItem('obs_wmp_json_url', jp);
-                return url;
-              }
+            const response = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
+            if (!response.ok) continue;
+            const config = await response.json();
+            const jsonPath = config.jsonUrl || config.jsonPath || '';
+            if (jsonPath) {
+              localStorage.setItem('obs_wmp_json_url', jsonPath);
+              return toBrowserUrl(jsonPath);
             }
-          } catch (e) {}
+          } catch (error) {}
         }
       }
 
@@ -257,32 +350,70 @@
     }
 
     async function loadOverlayConfig() {
-      /* Priority: ?json= param > config.json > ?appdata= param > auto-discover */
       const params = new URLSearchParams(window.location.search);
-
-      const jsonParam = params.get('json');
-      if (jsonParam) return toBrowserUrl(jsonParam);
+      const settings = {
+        jsonUrl: '',
+        mode: DEFAULTS.mode,
+        upcomingTracks: DEFAULTS.upcomingTracks,
+        compactRevealMs: DEFAULTS.compactRevealMs,
+      };
 
       try {
-        const response = await fetch(withCacheBust('config.json'), {
-          cache: 'no-store',
-        });
+        const response = await fetch(withCacheBust('config.json'), { cache: 'no-store' });
         if (response.ok) {
           const config = await response.json();
-          const url = toBrowserUrl(config.jsonUrl || config.jsonPath || '');
-          if (url) return url;
+          const jsonPath = config.jsonUrl || config.jsonPath || '';
+          settings.jsonUrl = toBrowserUrl(jsonPath);
+          settings.mode = normalizeMode(config.mode);
+          settings.upcomingTracks = clampNumber(
+            config.upcomingTracks,
+            0,
+            10,
+            settings.upcomingTracks
+          );
+          settings.compactRevealMs = clampNumber(
+            config.compactRevealMs,
+            0,
+            10000,
+            settings.compactRevealMs
+          );
         }
       } catch (error) {}
 
       const appdata = params.get('appdata');
-      if (appdata) {
-        return toBrowserUrl(`${appdata.replace(/\\/g, '/')}/obs-wmp-legacy/now-playing.json`);
+      if (!settings.jsonUrl && appdata) {
+        settings.jsonUrl = toBrowserUrl(
+          `${appdata.replace(/\\/g, '/')}/obs-wmp-legacy/now-playing.json`
+        );
       }
 
-      return await discoverJsonInObs();
-    }
+      const jsonParam = params.get('json');
+      if (jsonParam) settings.jsonUrl = toBrowserUrl(jsonParam);
 
-    /* ---- UI rendering ---- */
+      if (params.has('mode')) settings.mode = normalizeMode(params.get('mode'));
+      if (params.has('upcoming')) {
+        settings.upcomingTracks = clampNumber(
+          params.get('upcoming'),
+          0,
+          10,
+          settings.upcomingTracks
+        );
+      }
+      if (params.has('reveal_ms')) {
+        settings.compactRevealMs = clampNumber(
+          params.get('reveal_ms'),
+          0,
+          10000,
+          settings.compactRevealMs
+        );
+      }
+
+      if (!settings.jsonUrl) {
+        settings.jsonUrl = await discoverJsonInObs();
+      }
+
+      return settings;
+    }
 
     async function fetchData() {
       if (!state.jsonUrl) return null;
@@ -297,20 +428,6 @@
       }
     }
 
-    function setWaiting(message) {
-      els.card.classList.remove('playing', 'paused');
-      els.card.classList.add('waiting');
-      els.statusText.textContent = 'Waiting';
-      els.backend.textContent = 'WMP Legacy';
-      els.title.textContent = 'Waiting for Windows Media Player';
-      els.artist.textContent = message || 'No now-playing data yet.';
-      els.album.textContent = '';
-      els.progressFill.style.width = '0%';
-      els.timeCurrent.textContent = '--:--';
-      els.timeDuration.textContent = '--:--';
-      els.queue.classList.add('hidden');
-    }
-
     function formatTime(ms) {
       const safeMs = Math.max(0, ms || 0);
       const total = Math.floor(safeMs / 1000);
@@ -323,35 +440,171 @@
       return `${minutes}:${String(seconds).padStart(2, '0')}`;
     }
 
-    function updateQueue(data) {
+    function formatTrackTime(item) {
+      const seconds = Number(item.duration_sec);
+      if (!Number.isFinite(seconds) || seconds <= 0) return '';
+      return formatTime(seconds * 1000);
+    }
+
+    function currentIndexFromData(data) {
+      return Number.isInteger(data.current_playlist_index)
+        ? data.current_playlist_index
+        : -1;
+    }
+
+    function playlistPosition(items, currentIndex) {
+      if (currentIndex >= 0) {
+        const byIndex = items.findIndex((item) => item.index === currentIndex);
+        if (byIndex >= 0) return byIndex;
+      }
+      return items.findIndex((item) =>
+        (item.title || '') === (state.currentData?.title || '') &&
+        (item.artist || '') === (state.currentData?.artist || '')
+      );
+    }
+
+    function setWaiting(message) {
+      els.card.classList.remove('playing', 'paused', 'playlist-reveal');
+      els.card.classList.add('waiting');
+      els.title.textContent = 'Waiting for Windows Media Player';
+      els.artist.textContent = message || 'No now-playing data yet.';
+      els.composer.textContent = '--';
+      els.album.textContent = '--';
+      updateProgress(0, '--:--', '--:--');
+      els.playlistPanel.classList.add('hidden');
+      els.compactList.replaceChildren();
+      els.nextList.replaceChildren();
+      els.previousCard.classList.add('hidden');
+      els.nextCard.classList.add('hidden');
+      els.footerText.textContent = 'Waiting for your selected music source.';
+    }
+
+    function updateProgress(progress, currentText, durationText) {
+      const safeProgress = Math.max(0, Math.min(1, Number(progress) || 0));
+      const percent = `${(safeProgress * 100).toFixed(2)}%`;
+      els.progressFill.style.width = percent;
+      els.progressThumb.style.left = percent;
+      els.timeCurrent.textContent = currentText;
+      els.timeDuration.textContent = durationText;
+      els.compactCurrent.textContent = currentText;
+      els.compactDuration.textContent = durationText;
+    }
+
+    function triggerCompactReveal() {
+      if (state.mode !== 'minimized' || state.compactRevealMs <= 0) return;
+
+      clearTimeout(state.revealTimer);
+      els.card.classList.add('playlist-reveal');
+      state.revealTimer = setTimeout(() => {
+        els.card.classList.remove('playlist-reveal');
+        state.revealTimer = null;
+      }, state.compactRevealMs);
+    }
+
+    function buildCompactItems(items, position) {
+      if (!items.length) return [];
+      if (position < 0) return items.slice(0, state.upcomingTracks + 1);
+
+      const start = Math.max(0, position - 1);
+      const end = Math.min(items.length, position + state.upcomingTracks + 1);
+      return items.slice(start, end);
+    }
+
+    function renderCompactList(items, currentIndex, position) {
+      const compactItems = buildCompactItems(items, position);
+      els.compactList.replaceChildren(...compactItems.map((item) => {
+        const li = document.createElement('li');
+        if (item.index === currentIndex) li.className = 'current';
+
+        const number = document.createElement('span');
+        number.className = 'track-number';
+        number.textContent = `${item.index + 1}`;
+
+        const copy = document.createElement('span');
+        copy.className = 'compact-copy';
+        copy.textContent = item.title || 'Unknown title';
+
+        const artist = document.createElement('span');
+        artist.className = 'compact-artist';
+        artist.textContent = item.artist || '';
+
+        li.replaceChildren(number, copy, artist);
+        return li;
+      }));
+    }
+
+    function setSongCard(item, titleEl, artistEl) {
+      titleEl.textContent = item?.title || 'Unknown title';
+      const artist = item?.artist || '';
+      const duration = item ? formatTrackTime(item) : '';
+      artistEl.textContent = [artist, duration].filter(Boolean).join(' / ');
+    }
+
+    function renderNextList(items) {
+      els.nextList.replaceChildren(...items.map((item) => {
+        const li = document.createElement('li');
+
+        const icon = document.createElement('span');
+        icon.className = 'list-note';
+        icon.textContent = '';
+
+        const copy = document.createElement('span');
+        copy.className = 'next-copy';
+
+        const title = document.createElement('span');
+        title.className = 'song-title';
+        title.textContent = item.title || 'Unknown title';
+
+        const artist = document.createElement('span');
+        artist.className = 'song-artist';
+        const duration = formatTrackTime(item);
+        artist.textContent = [item.artist || '', duration].filter(Boolean).join(' / ');
+
+        copy.replaceChildren(title, artist);
+        li.replaceChildren(icon, copy);
+        return li;
+      }));
+    }
+
+    function updatePlaylist(data, trackChanged) {
       const items = Array.isArray(data.playlist) ? data.playlist : [];
       if (!items.length) {
-        els.queue.classList.add('hidden');
-        els.queueList.replaceChildren();
+        els.playlistPanel.classList.add('hidden');
+        els.compactList.replaceChildren();
+        els.nextList.replaceChildren();
+        els.previousCard.classList.add('hidden');
+        els.nextCard.classList.add('hidden');
         return;
       }
 
-      els.queue.classList.remove('hidden');
-      els.queueCount.textContent = `${items.length} ${items.length === 1 ? 'track' : 'tracks'}`;
+      const currentIndex = currentIndexFromData(data);
+      const position = playlistPosition(items, currentIndex);
+      const previous = position > 0 ? items[position - 1] : null;
+      const nextItems = position >= 0
+        ? items.slice(position + 1, position + 1 + state.upcomingTracks)
+        : items.slice(0, state.upcomingTracks);
 
-      const currentIndex = Number.isInteger(data.current_playlist_index)
-        ? data.current_playlist_index
-        : -1;
-      const windowed = items
-        .filter((item) => {
-          if (currentIndex < 0) return item.index < 4;
-          return item.index >= currentIndex - 1 && item.index <= currentIndex + 3;
-        })
-        .slice(0, 5);
+      els.playlistPanel.classList.remove('hidden');
+      els.playlistCount.textContent = `${items.length} ${items.length === 1 ? 'track' : 'tracks'}`;
 
-      els.queueList.replaceChildren(...windowed.map((item) => {
-        const li = document.createElement('li');
-        if (item.index === currentIndex) li.className = 'current';
-        const title = item.title || 'Unknown title';
-        const artist = item.artist ? ` - ${item.artist}` : '';
-        li.textContent = `${item.index + 1}. ${title}${artist}`;
-        return li;
-      }));
+      renderCompactList(items, currentIndex, position);
+
+      if (previous) {
+        els.previousCard.classList.remove('hidden');
+        setSongCard(previous, els.previousTitle, els.previousArtist);
+      } else {
+        els.previousCard.classList.add('hidden');
+      }
+
+      if (nextItems.length) {
+        els.nextCard.classList.remove('hidden');
+        renderNextList(nextItems);
+      } else {
+        els.nextCard.classList.add('hidden');
+        els.nextList.replaceChildren();
+      }
+
+      if (trackChanged) triggerCompactReveal();
     }
 
     function updateUI(data) {
@@ -361,8 +614,10 @@
         return;
       }
 
+      state.currentData = data;
       const key = `${data.title || ''}|${data.artist || ''}|${data.album || ''}`;
-      if (key !== state.lastTrackKey) {
+      const trackChanged = key !== state.lastTrackKey;
+      if (trackChanged) {
         els.card.classList.remove('track-change');
         void els.card.offsetWidth;
         els.card.classList.add('track-change');
@@ -370,26 +625,23 @@
       }
 
       const status = data.status || 'Unknown';
-      const isPlaying = status === 'Playing';
-      const isPaused = status === 'Paused';
-
-      els.card.classList.toggle('playing', isPlaying);
-      els.card.classList.toggle('paused', isPaused);
+      els.card.classList.toggle('playing', status === 'Playing');
+      els.card.classList.toggle('paused', status === 'Paused');
       els.card.classList.remove('waiting');
-      els.statusText.textContent = status;
-      els.backend.textContent = data.backend || data.source_app_id || 'WMP Legacy';
 
       els.title.textContent = data.title || 'Unknown title';
       els.artist.textContent = data.artist || 'Unknown artist';
-      els.album.textContent = data.album || '';
-      els.album.classList.toggle('hidden', !data.album);
+      els.composer.textContent = data.composer || data.artist || '--';
+      els.album.textContent = data.album || '--';
+      els.footerText.textContent = data.backend || data.source_app_id
+        ? `Playing from ${data.backend || data.source_app_id}.`
+        : 'Playing from your selected music source.';
 
       const progress = Math.max(0, Math.min(1, Number(data.progress) || 0));
-      els.progressFill.style.width = `${(progress * 100).toFixed(2)}%`;
-      els.timeCurrent.textContent = data.position_text || formatTime(data.position_ms);
-      els.timeDuration.textContent = data.duration_text || formatTime(data.duration_ms);
-
-      updateQueue(data);
+      const currentText = data.position_text || formatTime(data.position_ms);
+      const durationText = data.duration_text || formatTime(data.duration_ms);
+      updateProgress(progress, currentText, durationText);
+      updatePlaylist(data, trackChanged);
     }
 
     function interpolateProgress() {
@@ -399,8 +651,11 @@
       const elapsed = Date.now() - state.lastPollTime;
       const position = Math.min(state.lastPosition + elapsed, state.lastDuration);
       const ratio = position / state.lastDuration;
-      els.progressFill.style.width = `${(ratio * 100).toFixed(2)}%`;
-      els.timeCurrent.textContent = formatTime(position);
+      updateProgress(
+        ratio,
+        formatTime(position),
+        state.currentData.duration_text || formatTime(state.lastDuration)
+      );
     }
 
     async function poll() {
@@ -410,7 +665,7 @@
           state.idleTimer = setTimeout(() => {
             setWaiting('Waiting for now-playing JSON.');
             state.idleTimer = null;
-          }, CONFIG.idleAfterMs);
+          }, DEFAULTS.idleAfterMs);
         }
         return;
       }
@@ -420,7 +675,6 @@
         state.idleTimer = null;
       }
 
-      state.currentData = data;
       state.lastPollTime = Date.now();
       state.lastPosition = Number(data.position_ms) || 0;
       state.lastDuration = Number(data.duration_ms) || 0;
@@ -429,9 +683,11 @@
     }
 
     async function boot() {
-      state.jsonUrl = await loadOverlayConfig();
+      const settings = await loadOverlayConfig();
+      state.jsonUrl = settings.jsonUrl;
+      applyOverlaySettings(settings);
       await poll();
-      setInterval(poll, CONFIG.pollIntervalMs);
+      setInterval(poll, DEFAULTS.pollIntervalMs);
       setInterval(interpolateProgress, 33);
     }
 

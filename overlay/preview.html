@@ -7,172 +7,325 @@
   <link rel="stylesheet" href="style.css">
   <style>
     body {
-      background: #161b20;
+      background: #101820;
     }
 
     .preview-controls {
       position: fixed;
-      top: 12px;
+      bottom: 12px;
       right: 12px;
       z-index: 10;
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
+      max-width: min(460px, calc(100vw - 24px));
+      justify-content: flex-end;
     }
 
-    .preview-btn {
+    .preview-controls button {
+      min-height: 32px;
       padding: 7px 12px;
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: 8px;
-      background: rgba(13, 17, 20, 0.88);
-      color: #f4f7f8;
-      font: 700 12px "Segoe UI", Arial, sans-serif;
+      border: 1px solid rgba(214, 230, 242, 0.32);
+      border-radius: 6px;
+      background: rgba(20, 31, 41, 0.92);
+      color: #f7fbff;
+      font: 800 12px "Segoe UI", Arial, sans-serif;
       cursor: pointer;
-    }
-
-    .preview-btn:hover {
-      border-color: rgba(110, 231, 200, 0.55);
     }
   </style>
 </head>
 <body>
   <div class="preview-controls">
-    <button class="preview-btn" onclick="setMode('Playing')">Playing</button>
-    <button class="preview-btn" onclick="setMode('Paused')">Paused</button>
-    <button class="preview-btn" onclick="nextTrack()">Next</button>
-    <button class="preview-btn" onclick="setWaiting()">Waiting</button>
+    <button onclick="setMode('minimized')">Minimized</button>
+    <button onclick="setMode('maximized')">Maximized</button>
+    <button onclick="nextTrack()">Next</button>
+    <button onclick="toggleLongTitle()">Long Title</button>
+    <button onclick="togglePlaylist()">Playlist</button>
+    <button onclick="setWaiting()">Waiting</button>
   </div>
 
-  <main id="card" class="now-card playing" aria-live="polite">
-    <div class="accent-line"></div>
-    <section class="mark-panel">
-      <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
-        <path d="M18 33V12l18-4v21" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="14" cy="34" r="6" fill="none" stroke="currentColor" stroke-width="3"/>
-        <circle cx="32" cy="30" r="6" fill="none" stroke="currentColor" stroke-width="3"/>
-      </svg>
-      <div class="meter" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-        <span></span>
+  <main id="card" class="player-window mode-minimized playing" aria-live="polite">
+    <header class="window-bar">
+      <h1>MUSIC PLAYER</h1>
+      <div class="window-actions" aria-hidden="true">
+        <span id="mode-action" class="window-icon plus"></span>
+        <span class="window-divider"></span>
+        <span class="window-icon close"></span>
+      </div>
+    </header>
+
+    <section class="now-panel">
+      <div class="panel-surface">
+        <div class="panel-top">
+          <div class="now-pill">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 18V5l10-2v13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="6.5" cy="18" r="3.2" fill="currentColor"/>
+              <circle cx="16.5" cy="16" r="3.2" fill="currentColor"/>
+            </svg>
+            <span>NOW PLAYING</span>
+          </div>
+          <div class="sound-mark" aria-hidden="true">
+            <svg class="speaker" viewBox="0 0 24 24">
+              <path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/>
+              <path d="M16 9c1.2 1.7 1.2 4.3 0 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <div class="bars"><span></span><span></span><span></span></div>
+          </div>
+        </div>
+
+        <div class="track-grid">
+          <div class="note-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <path d="M25 46V15l25-5v31" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="17" cy="47" r="8" fill="currentColor"/>
+              <circle cx="43" cy="42" r="8" fill="currentColor"/>
+            </svg>
+          </div>
+
+          <div class="track-copy">
+            <div id="title" class="track-title"></div>
+            <div id="artist" class="track-artist"></div>
+            <div class="compact-time">
+              <span id="compact-current">--:--</span>
+              <span>/</span>
+              <span id="compact-duration">--:--</span>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-item composer-item">
+              <div class="meta-label">Composer</div>
+              <div id="composer" class="meta-value"></div>
+            </div>
+            <div class="meta-separator"></div>
+            <div class="meta-item album-item">
+              <div class="meta-label">Album</div>
+              <div id="album" class="meta-value"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="progress-block">
+          <div class="progress-track">
+            <div id="progress-fill" class="progress-fill"></div>
+            <div id="progress-thumb" class="progress-thumb"></div>
+          </div>
+          <div class="time-row">
+            <span id="time-current">--:--</span>
+            <span id="time-duration">--:--</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="content">
-      <div class="status-row">
-        <span class="status-dot"></span>
-        <span id="status-text" class="status-text">Playing</span>
-        <span id="backend" class="backend">WMP Legacy COM</span>
+    <section id="playlist-panel" class="playlist-panel">
+      <div class="playlist-head">
+        <span>CURRENT PLAYLIST</span>
+        <span id="playlist-count">0 tracks</span>
       </div>
-      <div class="title-wrap">
-        <div id="title" class="title"></div>
-      </div>
-      <div id="artist" class="artist"></div>
-      <div id="album" class="album"></div>
-      <div class="progress-block">
-        <div class="progress-track">
-          <div id="progress-fill" class="progress-fill"></div>
-        </div>
-        <div class="time-row">
-          <span id="time-current">1:18</span>
-          <span id="time-duration">4:32</span>
-        </div>
-      </div>
-      <div id="queue" class="queue">
-        <div class="queue-head">
-          <span>Queue</span>
-          <span>4 tracks</span>
-        </div>
-        <ol id="queue-list"></ol>
+      <ol id="compact-list" class="compact-list"></ol>
+      <div class="expanded-list">
+        <article id="previous-card" class="song-card hidden">
+          <div class="song-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 9 12l9 6V6zM6 6h2v12H6z" fill="currentColor"/>
+            </svg>
+            <span>PREVIOUS</span>
+          </div>
+          <div class="song-row">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 18V5l10-2v13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="6.5" cy="18" r="3.2" fill="currentColor"/>
+              <circle cx="16.5" cy="16" r="3.2" fill="currentColor"/>
+            </svg>
+            <div>
+              <div id="previous-title" class="song-title"></div>
+              <div id="previous-artist" class="song-artist"></div>
+            </div>
+          </div>
+        </article>
+        <section id="next-card" class="song-card hidden">
+          <div class="song-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6 6 9 6-9 6V6zM16 6h2v12h-2z" fill="currentColor"/>
+            </svg>
+            <span>NEXT</span>
+          </div>
+          <ol id="next-list" class="next-list"></ol>
+        </section>
       </div>
     </section>
+
+    <footer id="status-footer" class="status-footer">
+      <span class="info-dot" aria-hidden="true">i</span>
+      <span id="footer-text">Playing from WMP Legacy COM.</span>
+    </footer>
   </main>
 
   <script>
     const tracks = [
-      { title: 'Nocturne Op. 9 No. 2', artist: 'Frederic Chopin', album: 'Nocturnes', duration: '4:32' },
-      { title: 'Clair de Lune', artist: 'Claude Debussy', album: 'Suite bergamasque', duration: '5:08' },
-      { title: 'Moonlight Sonata', artist: 'Ludwig van Beethoven', album: 'Piano Sonatas', duration: '6:15' },
-      { title: 'The Four Seasons - Spring', artist: 'Antonio Vivaldi', album: 'Le quattro stagioni', duration: '3:24' },
+      { index: 0, title: 'The Tune of Azure Light', artist: 'Asteria', album: 'MapleStory: The Afterlands', duration_sec: 182 },
+      { index: 1, title: 'The World of Paradox', artist: 'Asteria', album: 'MapleStory: The Afterlands (Original Game Soundtrack)', duration_sec: 236 },
+      { index: 2, title: 'The Afterlands', artist: 'Asteria', album: 'MapleStory: The Afterlands', duration_sec: 205 },
+      { index: 3, title: 'Land of Contemplation', artist: 'Asteria', album: 'MapleStory: The Afterlands', duration_sec: 194 },
+      { index: 4, title: 'A Door Between Worlds', artist: 'Asteria', album: 'MapleStory: The Afterlands', duration_sec: 221 },
     ];
 
-    let current = 0;
-    let progress = 0.28;
-    let playing = true;
+    let current = 1;
+    let mode = 'minimized';
+    let longTitle = false;
+    let withPlaylist = true;
+    let waiting = false;
 
-    const card = document.getElementById('card');
-    const title = document.getElementById('title');
-    const artist = document.getElementById('artist');
-    const album = document.getElementById('album');
-    const statusText = document.getElementById('status-text');
-    const progressFill = document.getElementById('progress-fill');
-    const timeCurrent = document.getElementById('time-current');
-    const timeDuration = document.getElementById('time-duration');
-    const queueList = document.getElementById('queue-list');
+    const els = {
+      card: document.getElementById('card'),
+      modeAction: document.getElementById('mode-action'),
+      title: document.getElementById('title'),
+      artist: document.getElementById('artist'),
+      composer: document.getElementById('composer'),
+      album: document.getElementById('album'),
+      progressFill: document.getElementById('progress-fill'),
+      progressThumb: document.getElementById('progress-thumb'),
+      timeCurrent: document.getElementById('time-current'),
+      timeDuration: document.getElementById('time-duration'),
+      compactCurrent: document.getElementById('compact-current'),
+      compactDuration: document.getElementById('compact-duration'),
+      playlistPanel: document.getElementById('playlist-panel'),
+      playlistCount: document.getElementById('playlist-count'),
+      compactList: document.getElementById('compact-list'),
+      previousCard: document.getElementById('previous-card'),
+      previousTitle: document.getElementById('previous-title'),
+      previousArtist: document.getElementById('previous-artist'),
+      nextCard: document.getElementById('next-card'),
+      nextList: document.getElementById('next-list'),
+      footerText: document.getElementById('footer-text'),
+    };
 
-    function renderTrack() {
-      const track = tracks[current];
-      title.textContent = track.title;
-      artist.textContent = track.artist;
-      album.textContent = track.album;
-      timeDuration.textContent = track.duration;
-      progressFill.style.width = `${(progress * 100).toFixed(2)}%`;
-      queueList.replaceChildren(...tracks.map((item, index) => {
-        const li = document.createElement('li');
-        if (index === current) li.className = 'current';
-        li.textContent = `${index + 1}. ${item.title} - ${item.artist}`;
-        return li;
-      }));
+    function formatTime(ms) {
+      const total = Math.floor(Math.max(0, ms) / 1000);
+      return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
     }
 
-    function setMode(mode) {
-      playing = mode === 'Playing';
-      card.classList.toggle('playing', playing);
-      card.classList.toggle('paused', mode === 'Paused');
-      card.classList.remove('waiting');
-      statusText.textContent = mode;
-      renderTrack();
+    function setProgress(ratio, currentText, durationText) {
+      const percent = `${(ratio * 100).toFixed(2)}%`;
+      els.progressFill.style.width = percent;
+      els.progressThumb.style.left = percent;
+      els.timeCurrent.textContent = currentText;
+      els.timeDuration.textContent = durationText;
+      els.compactCurrent.textContent = currentText;
+      els.compactDuration.textContent = durationText;
+    }
+
+    function renderPlaylist() {
+      if (!withPlaylist) {
+        els.playlistPanel.classList.add('hidden');
+        return;
+      }
+
+      els.playlistPanel.classList.remove('hidden');
+      els.playlistCount.textContent = `${tracks.length} tracks`;
+
+      const start = Math.max(0, current - 1);
+      const compact = tracks.slice(start, Math.min(tracks.length, current + 4));
+      els.compactList.replaceChildren(...compact.map((track) => {
+        const li = document.createElement('li');
+        if (track.index === current) li.className = 'current';
+        li.innerHTML = `<span class="track-number">${track.index + 1}</span><span class="compact-copy"></span><span class="compact-artist"></span>`;
+        li.querySelector('.compact-copy').textContent = track.title;
+        li.querySelector('.compact-artist').textContent = track.artist;
+        return li;
+      }));
+
+      const previous = current > 0 ? tracks[current - 1] : null;
+      if (previous) {
+        els.previousCard.classList.remove('hidden');
+        els.previousTitle.textContent = previous.title;
+        els.previousArtist.textContent = previous.artist;
+      } else {
+        els.previousCard.classList.add('hidden');
+      }
+
+      const next = tracks.slice(current + 1, current + 4);
+      if (next.length) {
+        els.nextCard.classList.remove('hidden');
+        els.nextList.replaceChildren(...next.map((track) => {
+          const li = document.createElement('li');
+          li.innerHTML = '<span class="list-note"></span><span class="next-copy"><span class="song-title"></span><span class="song-artist"></span></span>';
+          li.querySelector('.song-title').textContent = track.title;
+          li.querySelector('.song-artist').textContent = track.artist;
+          return li;
+        }));
+      } else {
+        els.nextCard.classList.add('hidden');
+      }
+    }
+
+    function render() {
+      els.card.classList.toggle('mode-maximized', mode === 'maximized');
+      els.card.classList.toggle('mode-minimized', mode !== 'maximized');
+      els.modeAction.classList.toggle('minus', mode === 'maximized');
+      els.modeAction.classList.toggle('plus', mode !== 'maximized');
+
+      if (waiting) {
+        els.card.classList.add('waiting');
+        els.card.classList.remove('playing', 'paused', 'playlist-reveal');
+        els.title.textContent = 'Waiting for Windows Media Player';
+        els.artist.textContent = 'Start playback in Windows Media Player Legacy.';
+        els.composer.textContent = '--';
+        els.album.textContent = '--';
+        setProgress(0, '--:--', '--:--');
+        els.playlistPanel.classList.add('hidden');
+        return;
+      }
+
+      const track = tracks[current];
+      els.card.classList.add('playing');
+      els.card.classList.remove('waiting', 'paused');
+      els.title.textContent = longTitle
+        ? 'The World of Paradox and the Extremely Long Title That Should Never Break the Window'
+        : track.title;
+      els.artist.textContent = track.artist;
+      els.composer.textContent = 'Asteria';
+      els.album.textContent = track.album;
+      els.footerText.textContent = 'Playing from WMP Legacy COM.';
+      setProgress(0.38, '1:24', formatTime(track.duration_sec * 1000));
+      renderPlaylist();
+    }
+
+    function setMode(nextMode) {
+      mode = nextMode;
+      render();
     }
 
     function nextTrack() {
+      waiting = false;
       current = (current + 1) % tracks.length;
-      progress = 0;
-      card.classList.remove('track-change');
-      void card.offsetWidth;
-      card.classList.add('track-change');
-      renderTrack();
+      els.card.classList.remove('track-change', 'playlist-reveal');
+      void els.card.offsetWidth;
+      els.card.classList.add('track-change', 'playlist-reveal');
+      render();
+      setTimeout(() => els.card.classList.remove('playlist-reveal'), 3000);
+    }
+
+    function toggleLongTitle() {
+      waiting = false;
+      longTitle = !longTitle;
+      render();
+    }
+
+    function togglePlaylist() {
+      waiting = false;
+      withPlaylist = !withPlaylist;
+      render();
     }
 
     function setWaiting() {
-      playing = false;
-      card.classList.remove('playing', 'paused');
-      card.classList.add('waiting');
-      statusText.textContent = 'Waiting';
-      title.textContent = 'Waiting for Windows Media Player';
-      artist.textContent = 'No now-playing data yet.';
-      album.textContent = '';
-      progressFill.style.width = '0%';
-      timeCurrent.textContent = '--:--';
-      timeDuration.textContent = '--:--';
-      queueList.replaceChildren();
+      waiting = true;
+      render();
     }
 
-    function formatTime(ms) {
-      const total = Math.floor(ms / 1000);
-      const minutes = Math.floor(total / 60);
-      const seconds = total % 60;
-      return `${minutes}:${String(seconds).padStart(2, '0')}`;
-    }
-
-    setInterval(() => {
-      if (!playing) return;
-      progress = Math.min(progress + 0.0018, 1);
-      progressFill.style.width = `${(progress * 100).toFixed(2)}%`;
-      timeCurrent.textContent = formatTime(progress * 272000);
-      if (progress >= 1) nextTrack();
-    }, 50);
-
-    renderTrack();
+    render();
   </script>
 </body>
 </html>

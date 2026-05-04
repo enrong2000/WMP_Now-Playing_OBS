@@ -40,6 +40,8 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 
 精美的"正在播放"叠加层（毛玻璃风格、动态 EQ 条、发光渐变进度条）现在**直接在插件源内部渲染**，由内嵌的私有 OBS 浏览器源实现。**不再需要添加第二个浏览器源。**
 
+叠加层可在紧凑的最小化窗口模式（默认）和更完整的最大化播放器模式之间切换。最大化模式会显示当前曲目的前一首，以及当前播放列表中可配置数量的后续曲目；最小化模式会在切歌时短暂展开当前播放列表，让观众看到当前曲目所在位置。
+
 如果您喜欢文本输出，可以在源的 *Display mode* 设置中选择 **Template Text** 或 **UI Card (Text)**。
 
 叠加层的 HTML/CSS 文件仍然安装在 `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`，如需在 OBS 之外使用，仍可作为外部浏览器源加载。
@@ -102,6 +104,12 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 
 JSON 状态写入 `%APPDATA%/obs-wmp-legacy/now-playing.json`。在浏览器源 URL 中传入 `?json=JSON路径`，或在 `index.html` 旁创建 `config.json`，内容为 `{"jsonUrl":"http://absolute/.../now-playing.json"}`。
 
+外部浏览器源还可通过 URL/config 指定：
+
+- `mode=minimized|maximized`
+- `upcoming=3` 或 `{"upcomingTracks":3}`
+- `reveal_ms=3000` 或 `{"compactRevealMs":3000}`
+
 ## 构建
 
 要求：
@@ -133,7 +141,10 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 |------|------|
 | **App filter** | 用于识别 WMP 进程的子字符串。默认：`wmplayer`。 |
 | **Display mode** | `Embedded Overlay`（默认，在源内直接渲染精美的浏览器叠加层）、`Template Text` 或 `UI Card (Text)`。 |
-| **Embedded overlay width/height** | 内嵌叠加层像素尺寸（默认 520x260）。 |
+| **Overlay work mode** | `Minimized Window`（默认紧凑布局）或 `Maximized Window`（带前一首/后续曲目的完整播放器）。 |
+| **Embedded overlay width/height** | 内嵌叠加层像素尺寸（默认 1120x460，为最小化模式的播放列表展开预留空间）。 |
+| **Upcoming tracks** | 最大化播放列表窗口中显示的当前曲目后续曲目数量。默认：3。 |
+| **Compact playlist reveal** | 最小化窗口在切歌后展开播放列表的时长。默认：3000 ms。 |
 | **Format** | 输出模板（在 Template Text 模式下使用）。 |
 | **Progress width** | `{progress_bar}` 的字符宽度。 |
 | **Show composer** | 在 UI Card (Text) 模式下显示作曲家信息（如有）。 |
@@ -165,6 +176,6 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 
 ### 显示模式
 
-- **Embedded Overlay**（默认）：在源内部通过内嵌的私有 OBS 浏览器源渲染的精美毛玻璃"正在播放"叠加层。无需第二个源。
+- **Embedded Overlay**（默认）：在源内部通过内嵌的私有 OBS 浏览器源渲染的精美毛玻璃"正在播放"叠加层，支持最小化和最大化窗口布局。无需第二个源。
 - **UI Card (Text)**：带图标、作曲家信息和播放列表显示的结构化正在播放文本面板。
 - **Template Text**：可自定义的令牌模板模式，完全控制输出格式。
