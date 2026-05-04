@@ -12,6 +12,11 @@
 
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <ObjBase.h>
+#include <ExDisp.h>
+#include <ShlObj.h>
+#include <ShlDisp.h>
+#include <comdef.h>
 
 #include <obs-module.h>
 
@@ -281,14 +286,194 @@ static std::string read_file_contents(const std::string &path)
 }
 
 /**
+ * Spawn the bridge through explorer.exe via the IShellDispatch2
+ * "shell trick".  This is the most reliable way to launch a child
+ * process with a true user-context (medium-integrity) token from
+ * inside an elevated process.
+ *
+ * Unlike CreateProcessWithTokenW — which can succeed yet leave the
+ * child inheriting the parent's elevated WindowStation/Desktop and
+ * thereby break WMP's COM-Remote handshake (which requires UI
+ * access) — this approach asks the already-running explorer.exe
+ * (medium-IL, attached to the user's interactive desktop) to spawn
+ * the process for us.  The resulting child has a genuine medium-IL
+ * primary token and a normal user desktop, which is what WMP needs
+ * to accept a Remote-mode COM connection.
+ *
+ * Returns true on successful invocation of ShellExecute (we have
+ * no process handle, so the caller must wait on the temp output
+ * file to appear).
+ */
+static bool run_bridge_via_explorer(const std::wstring &exe_path,
+				    const std::wstring &args)
+{
+	bool launched = false;
+
+	HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED |
+						       COINIT_DISABLE_OLE1DDE);
+	const bool need_uninit = SUCCEEDED(init);
+
+	IShellWindows *windows = nullptr;
+	IDispatch *desktop_disp = nullptr;
+	IServiceProvider *sp = nullptr;
+	IShellBrowser *browser = nullptr;
+	IShellView *view = nullptr;
+	IDispatch *bg_disp = nullptr;
+	IShellFolderViewDual *folder_view = nullptr;
+	IDispatch *app_disp = nullptr;
+	IShellDispatch2 *shell_dispatch = nullptr;
+
+	long phwnd = 0;
+	VARIANT loc = {};
+	VariantInit(&loc);
+	loc.vt = VT_I4;
+	loc.lVal = CSIDL_DESKTOP;
+	VARIANT empty = {};
+	VariantInit(&empty);
+
+	HRESULT hr = CoCreateInstance(CLSID_ShellWindows, nullptr,
+				      CLSCTX_LOCAL_SERVER,
+				      IID_PPV_ARGS(&windows));
+	if (FAILED(hr) || !windows)
+		goto cleanup;
+
+	hr = windows->FindWindowSW(&loc, &empty, SWC_DESKTOP, &phwnd,
+				   SWFO_NEEDDISPATCH, &desktop_disp);
+	if (FAILED(hr) || !desktop_disp)
+		goto cleanup;
+
+	hr = desktop_disp->QueryInterface(IID_PPV_ARGS(&sp));
+	if (FAILED(hr) || !sp)
+		goto cleanup;
+
+	hr = sp->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&browser));
+	if (FAILED(hr) || !browser)
+		goto cleanup;
+
+	hr = browser->QueryActiveShellView(&view);
+	if (FAILED(hr) || !view)
+		goto cleanup;
+
+	hr = view->GetItemObject(SVGIO_BACKGROUND, IID_PPV_ARGS(&bg_disp));
+	if (FAILED(hr) || !bg_disp)
+		goto cleanup;
+
+	hr = bg_disp->QueryInterface(IID_PPV_ARGS(&folder_view));
+	if (FAILED(hr) || !folder_view)
+		goto cleanup;
+
+	hr = folder_view->get_Application(&app_disp);
+	if (FAILED(hr) || !app_disp)
+		goto cleanup;
+
+	hr = app_disp->QueryInterface(IID_PPV_ARGS(&shell_dispatch));
+	if (FAILED(hr) || !shell_dispatch)
+		goto cleanup;
+
+	{
+		_bstr_t b_file(exe_path.c_str());
+		_bstr_t b_args(args.c_str());
+		_bstr_t b_op(L"open");
+
+		std::filesystem::path exe_p(exe_path);
+		std::wstring dir_str = exe_p.parent_path().wstring();
+		_bstr_t b_dir(dir_str.c_str());
+
+		VARIANT v_args = {};
+		v_args.vt = VT_BSTR;
+		v_args.bstrVal = b_args;
+		VARIANT v_dir = {};
+		v_dir.vt = VT_BSTR;
+		v_dir.bstrVal = b_dir;
+		VARIANT v_op = {};
+		v_op.vt = VT_BSTR;
+		v_op.bstrVal = b_op;
+		VARIANT v_show = {};
+		v_show.vt = VT_I4;
+		v_show.lVal = SW_HIDE;
+
+		hr = shell_dispatch->ShellExecute(b_file, v_args, v_dir, v_op,
+						  v_show);
+		launched = SUCCEEDED(hr);
+	}
+
+cleanup:
+	if (shell_dispatch)
+		shell_dispatch->Release();
+	if (app_disp)
+		app_disp->Release();
+	if (folder_view)
+		folder_view->Release();
+	if (bg_disp)
+		bg_disp->Release();
+	if (view)
+		view->Release();
+	if (browser)
+		browser->Release();
+	if (sp)
+		sp->Release();
+	if (desktop_disp)
+		desktop_disp->Release();
+	if (windows)
+		windows->Release();
+
+	if (need_uninit)
+		CoUninitialize();
+
+	return launched;
+}
+
+/**
+ * Wait for the bridge's output file to be fully written.
+ *
+ * Used when launching via the explorer shell trick (we have no
+ * process handle to wait on).  We check that the file exists, has
+ * non-zero size, and ends with a closing brace+newline (the bridge
+ * always terminates its JSON output with "}\n").
+ */
+static bool wait_for_output_file(const std::string &path,
+				 DWORD timeout_ms)
+{
+	const DWORD start = GetTickCount();
+	for (;;) {
+		std::error_code ec;
+		auto size = std::filesystem::file_size(path, ec);
+		if (!ec && size >= 2) {
+			/* Re-open and check trailing byte to be sure the
+			   bridge has finished flushing. */
+			std::ifstream f(path, std::ios::binary);
+			if (f) {
+				f.seekg(-2, std::ios::end);
+				char tail[2] = {};
+				f.read(tail, 2);
+				if (tail[0] == '}' && tail[1] == '\n')
+					return true;
+			}
+		}
+		if (GetTickCount() - start >= timeout_ms)
+			return false;
+		Sleep(50);
+	}
+}
+
+/**
  * Spawn the bridge process and read its output from a temp file.
  *
  * When the host process (OBS) is running elevated, the bridge is
- * launched with a de-elevated token so it can connect to the user's
- * non-elevated WMP instance via COM Remote mode.
+ * launched de-elevated so it can connect to the user's non-elevated
+ * WMP instance via COM Remote mode.  Three strategies are tried in
+ * order:
  *
- * Uses temp file IPC instead of pipes because CreateProcessWithTokenW
- * cannot inherit pipe handles across security boundaries.
+ *   1. The explorer.exe shell trick (IShellDispatch2::ShellExecute)
+ *      — most reliable, gives the child a true medium-IL primary
+ *      token AND a normal user WindowStation/Desktop, which WMP's
+ *      Remote-mode COM handshake actually requires.
+ *   2. CreateProcessWithTokenW with the linked non-elevated token —
+ *      legacy fallback in case the shell trick is unavailable.
+ *   3. Plain CreateProcessW — used when not elevated.
+ *
+ * Uses temp file IPC instead of pipes because both de-elevation
+ * paths cannot inherit pipe handles across security boundaries.
  *
  * Returns the raw JSON string, or empty on failure.
  */
@@ -299,68 +484,96 @@ static std::string run_bridge_process(const std::string &exe_path)
 	if (temp_path.empty())
 		return {};
 
-	/* Build command line: "exe_path" --output "temp_path" */
+	/* Build command line: --output "temp_path" */
 	std::wstring wpath = utf8_to_wide(exe_path);
 	std::wstring wtemp = utf8_to_wide(temp_path);
-	std::wstring cmd_line = L"\"" + wpath + L"\" --output \"" + wtemp + L"\"";
+	std::wstring cmd_args = L"--output \"" + wtemp + L"\"";
+	std::wstring full_cmd = L"\"" + wpath + L"\" " + cmd_args;
+
+	const bool elevated = is_process_elevated();
+
+	bool waited = false;       /* did we WaitForSingleObject on a real handle */
+	bool succeeded_launch = false;
 
 	STARTUPINFOW si = {};
 	si.cb = sizeof(si);
 	si.dwFlags = STARTF_USESHOWWINDOW;
 	si.wShowWindow = SW_HIDE;
-
 	PROCESS_INFORMATION pi = {};
-	BOOL ok = FALSE;
 
-	/* Try de-elevated launch first when running as Administrator */
-	HANDLE deelev_token = nullptr;
-	if (is_process_elevated()) {
-		deelev_token = get_non_elevated_token();
-	}
-
-	if (deelev_token) {
-		ok = CreateProcessWithTokenW(
-			deelev_token, 0 /* dwLogonFlags */,
-			wpath.c_str(), cmd_line.data(),
-			CREATE_NO_WINDOW, nullptr /* lpEnvironment */,
-			nullptr /* lpCurrentDirectory */, &si, &pi);
-
-		if (!ok) {
-			blog(LOG_WARNING,
-			     "[obs-wmp-legacy] de-elevated launch failed "
-			     "(0x%08lX), falling back to normal launch",
-			     (unsigned long)GetLastError());
-		} else {
+	/* Strategy 1: explorer.exe shell trick (preferred when elevated) */
+	if (elevated) {
+		if (run_bridge_via_explorer(wpath, cmd_args)) {
 			blog(LOG_INFO,
-			     "[obs-wmp-legacy] bridge launched de-elevated");
+			     "[obs-wmp-legacy] bridge launched via explorer "
+			     "shell-dispatch (de-elevated)");
+			/* No process handle — wait on the output file. */
+			succeeded_launch = wait_for_output_file(temp_path,
+								5000);
+			if (!succeeded_launch) {
+				blog(LOG_WARNING,
+				     "[obs-wmp-legacy] explorer-launched "
+				     "bridge produced no output within "
+				     "timeout; falling back to "
+				     "CreateProcessWithTokenW");
+			}
 		}
-		CloseHandle(deelev_token);
 	}
 
-	if (!ok) {
-		/* Normal launch (not elevated, or de-elevation failed) */
-		ok = CreateProcessW(nullptr, cmd_line.data(), nullptr, nullptr,
-				    FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
-				    &si, &pi);
+	/* Strategy 2: CreateProcessWithTokenW with linked token */
+	if (!succeeded_launch && elevated) {
+		HANDLE deelev_token = get_non_elevated_token();
+		if (deelev_token) {
+			std::wstring cmd_buf = full_cmd;
+			BOOL ok = CreateProcessWithTokenW(
+				deelev_token, 0 /* dwLogonFlags */,
+				wpath.c_str(), cmd_buf.data(),
+				CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+			if (ok) {
+				blog(LOG_INFO,
+				     "[obs-wmp-legacy] bridge launched via "
+				     "CreateProcessWithTokenW (de-elevated)");
+				succeeded_launch = true;
+				waited = true;
+			} else {
+				blog(LOG_WARNING,
+				     "[obs-wmp-legacy] "
+				     "CreateProcessWithTokenW failed "
+				     "(0x%08lX), falling back to normal "
+				     "launch",
+				     (unsigned long)GetLastError());
+			}
+			CloseHandle(deelev_token);
+		}
 	}
 
-	if (!ok) {
-		/* Clean up temp file on failure */
+	/* Strategy 3: plain CreateProcessW */
+	if (!succeeded_launch) {
+		std::wstring cmd_buf = full_cmd;
+		BOOL ok = CreateProcessW(nullptr, cmd_buf.data(), nullptr,
+					 nullptr, FALSE, CREATE_NO_WINDOW,
+					 nullptr, nullptr, &si, &pi);
+		if (ok) {
+			succeeded_launch = true;
+			waited = true;
+		}
+	}
+
+	if (!succeeded_launch) {
 		std::error_code ec;
 		std::filesystem::remove(temp_path, ec);
 		return {};
 	}
 
-	/* Wait for the process to complete (5-second timeout) */
-	DWORD wait_result = WaitForSingleObject(pi.hProcess, 5000);
-	if (wait_result != WAIT_OBJECT_0) {
-		/* Kill the process if it hasn't exited yet */
-		TerminateProcess(pi.hProcess, 1);
-		WaitForSingleObject(pi.hProcess, 1000);
+	if (waited) {
+		DWORD wait_result = WaitForSingleObject(pi.hProcess, 5000);
+		if (wait_result != WAIT_OBJECT_0) {
+			TerminateProcess(pi.hProcess, 1);
+			WaitForSingleObject(pi.hProcess, 1000);
+		}
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
 	}
-
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
 
 	/* Read the output from the temp file */
 	std::string output = read_file_contents(temp_path);

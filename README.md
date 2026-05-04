@@ -9,9 +9,8 @@ OBS Studio source plugin that displays now-playing metadata from **Windows Media
 - Registers an OBS input source named **Windows Media Player (Legacy) Now Playing**.
 - Connects to a running `wmplayer.exe` instance using COM (`IWMPRemoteMediaServices` remote mode).
 - Reads title, artist, album, album artist, composer, playback state, position, duration, and the full playlist.
-- Renders a text display using OBS' bundled Windows text source.
-- **Writes real-time media state to a JSON file**, enabling a beautiful HTML/CSS overlay loaded via OBS Browser Source.
-- Includes a **Now-Playing overlay** with glassmorphism design, animated EQ visualizer bars, and a glowing gradient progress bar.
+- Renders the **rich glassmorphism Now-Playing overlay directly inside the OBS source** via an embedded private Browser Source — **no separate Browser Source required**.
+- Also writes real-time media state to a JSON file for use by external overlays / consumers.
 
 ## How It Works
 
@@ -29,7 +28,21 @@ Windows Media Player (Legacy) does not register itself in the Running Object Tab
 
 ### Administrator Compatibility
 
-When OBS runs as Administrator (common for game capture), spawned child processes inherit the elevated token. Since WMP typically runs as a standard user, cross-integrity-level COM connections fail. The plugin automatically detects elevation and launches the bridge with a de-elevated (medium-integrity) token via `CreateProcessWithTokenW`, ensuring the bridge can connect to the user's WMP instance regardless of OBS's privilege level.
+When OBS runs as Administrator (common for game capture), spawned child processes inherit the elevated token. Since WMP typically runs as a standard user, cross-integrity-level COM connections fail.
+
+The plugin detects elevation and de-elevates the bridge through a **three-tier fallback chain**:
+
+1. **Explorer-shell trick** (preferred): the plugin asks the running `explorer.exe` (which itself runs at medium integrity in the user's session) to launch the bridge via `IShellDispatch2::ShellExecute`. This is the most reliable approach because the resulting child receives both a true medium-IL primary token *and* the user's normal `WindowStation\Desktop` — both of which WMP's COM Remote-mode handshake actually requires. (`CreateProcessWithTokenW` alone leaves the child attached to the elevated parent's locked-down desktop, which silently breaks the WMP attach even though the call returns success.)
+2. **`CreateProcessWithTokenW`** with the linked non-elevated token — used as a secondary fallback if the shell trick is unavailable.
+3. Plain **`CreateProcessW`** — used when OBS is not elevated.
+
+## Now-Playing Overlay
+
+The rich Now-Playing overlay (glassmorphism design, animated EQ bars, gradient progress bar) is rendered **inside the plugin source itself** via an embedded private OBS Browser Source. You do **not** need to add a second Browser Source.
+
+If you prefer text output, choose **Template Text** or **UI Card (Text)** under the source's *Display mode* setting.
+
+The overlay HTML/CSS files are still installed to `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/` and can be loaded by an external Browser Source if you want to use them outside of OBS.
 
 ## Installation
 
@@ -76,18 +89,18 @@ The installer will:
 
 After installing the plugin:
 
-1. In OBS, add a source -> **Windows Media Player (Legacy) Now Playing**
-   (this activates the plugin and starts writing JSON data).
-2. Add another source -> **Browser**:
-   - Check **Local file**
-   - Path: `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/index.html`
-   - Width: `520`, Height: `260`
-   - Custom CSS: *(leave empty)*
-3. Position the overlay wherever you like on your scene.
+1. In OBS, add a source -> **Windows Media Player (Legacy) Now Playing**.
+2. That's it — the rich glassmorphism overlay renders inside that single source. Position and resize it on your scene.
 
-The overlay reads from `%APPDATA%/obs-wmp-legacy/now-playing.json`, which is updated by the plugin in real time.
-The installer writes `overlay/config.json` so OBS Browser Source can read that JSON file through OBS' `http://absolute/...` local-file origin.
-For manual overlay installs, pass `?json=PATH_TO_JSON` in the Browser Source URL or create the same `config.json` next to `index.html`.
+(Width / height of the embedded overlay can be adjusted on the source's **Properties** panel.)
+
+If you want to use the overlay outside the plugin (e.g. on a separate Browser Source or another machine), it is still installed to:
+
+```
+<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/index.html
+```
+
+and the JSON state is written to `%APPDATA%/obs-wmp-legacy/now-playing.json`. Pass `?json=PATH_TO_JSON` in the Browser Source URL or create a `config.json` next to `index.html` with `{"jsonUrl":"http://absolute/.../now-playing.json"}`.
 
 ## Build
 
@@ -119,14 +132,15 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 | Setting | Description |
 |---------|-------------|
 | **App filter** | Substring to identify the WMP process. Default: `wmplayer`. |
-| **Display mode** | `UI Card` (structured panel) or `Template Text` (custom format string). |
+| **Display mode** | `Embedded Overlay` (rich Browser-Source overlay rendered inside the plugin source — default), `Template Text`, or `UI Card (Text)`. |
+| **Embedded overlay width/height** | Pixel dimensions of the embedded overlay (default 520x260). |
 | **Format** | Output template (used in Template Text mode). |
 | **Progress width** | Character width of `{progress_bar}`. |
-| **Show composer** | Display composer information in UI Card mode when available. |
+| **Show composer** | Display composer information in UI Card (Text) mode when available. |
 | **Show full playlist** | Show all tracks from the source playlist (via `IWMPPlaylistCollection`). When off, only the current playback queue is shown. Default: on. |
-| **Refresh interval** | COM polling interval in milliseconds. |
+| **Refresh interval** | COM polling interval in milliseconds. Default: 500 ms. |
 | **Hide when no media** | Render nothing when WMP is not running or has no media loaded. |
-| **JSON output path** | File path for the JSON data file consumed by the overlay. Default: `%APPDATA%/obs-wmp-legacy/now-playing.json`. |
+| **JSON output path** | File path for the JSON data file consumed by the embedded overlay (and any external overlay). Default: `%APPDATA%/obs-wmp-legacy/now-playing.json`. |
 
 ### Format Tokens
 
@@ -151,5 +165,6 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 
 ### Display Modes
 
-- **UI Card** (default): Structured now-playing panel with icons, composer, and playlist display.
-- **Template Text**: Customizable token template mode for full control over output format.
+- **Embedded Overlay** (default): rich glassmorphism Now-Playing panel rendered inside the source via an embedded private OBS Browser Source. No second source required.
+- **UI Card (Text)**: structured now-playing text panel with icons, composer, and playlist display.
+- **Template Text**: customizable token template mode for full control over output format.
