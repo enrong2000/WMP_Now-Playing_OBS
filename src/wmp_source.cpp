@@ -48,6 +48,7 @@ struct SourceContext {
 	bool hide_when_empty = false;
 	int display_mode = 0;
 	bool show_composer = true;
+	bool show_full_playlist = true;
 	uint32_t refresh_ms = 1000;
 	int progress_width = 24;
 	float update_elapsed = 0.0f;
@@ -132,14 +133,43 @@ std::string progress_bar(double ratio, int width)
 	return bar;
 }
 
-std::string format_playlist_text(const MediaState &state)
+/**
+ * Select the appropriate playlist to display based on user preference.
+ *
+ * When show_full_playlist is true and the full playlist is available
+ * (and larger than the current queue), use the full playlist.
+ * Otherwise, use the current playback queue.
+ */
+const std::vector<PlaylistItem> &
+effective_playlist(const SourceContext &context, const MediaState &state)
 {
-	if (state.playlist.empty())
+	if (context.show_full_playlist && !state.full_playlist.empty() &&
+	    state.full_playlist.size() > state.playlist.size())
+		return state.full_playlist;
+	return state.playlist;
+}
+
+int effective_playlist_index(const SourceContext &context,
+			     const MediaState &state)
+{
+	if (context.show_full_playlist && !state.full_playlist.empty() &&
+	    state.full_playlist.size() > state.playlist.size())
+		return state.full_playlist_index;
+	return state.current_playlist_index;
+}
+
+std::string format_playlist_text(const SourceContext &context,
+				 const MediaState &state)
+{
+	const auto &pl = effective_playlist(context, state);
+	const int idx = effective_playlist_index(context, state);
+
+	if (pl.empty())
 		return {};
 
 	std::ostringstream out;
-	for (const auto &item : state.playlist) {
-		out << (item.index == state.current_playlist_index ? "> " : "  ");
+	for (const auto &item : pl) {
+		out << (item.index == idx ? "> " : "  ");
 		out << (item.index + 1) << ". ";
 		out << (item.title.empty() ? "Unknown" : item.title);
 
@@ -157,6 +187,9 @@ std::string render_ui_card_text(const SourceContext &context,
 				int64_t duration, double ratio,
 				const std::string &percent)
 {
+	const auto &pl = effective_playlist(context, state);
+	const int idx = effective_playlist_index(context, state);
+
 	std::ostringstream ui;
 	ui << "NOW PLAYING  " << playback_status_text(state.playback_status)
 	   << "\n";
@@ -175,9 +208,9 @@ std::string render_ui_card_text(const SourceContext &context,
 	ui << format_time(position) << " / "
 	   << (duration > 0 ? format_time(duration) : "--:--");
 
-	if (!state.playlist.empty()) {
-		ui << "\n\nQUEUE (" << state.playlist.size() << " tracks)\n";
-		ui << format_playlist_text(state);
+	if (!pl.empty()) {
+		ui << "\n\nQUEUE (" << pl.size() << " tracks)\n";
+		ui << format_playlist_text(context, state);
 	}
 
 	return ui.str();
@@ -214,6 +247,8 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 		return render_ui_card_text(context, state, relative_position,
 					   duration, ratio, percent.str());
 
+	const auto &pl = effective_playlist(context, state);
+
 	std::string output = context.format;
 	replace_all(output, "{title}", fallback(state.title, "Unknown title"));
 	replace_all(output, "{artist}", fallback(state.artist, "Unknown artist"));
@@ -237,9 +272,10 @@ std::string render_text(const SourceContext &context, const MediaState &state)
 	replace_all(output, "{diagnostic}", state.error_message);
 
 	std::ostringstream playlist_count;
-	playlist_count << state.playlist.size();
+	playlist_count << pl.size();
 	replace_all(output, "{playlist_count}", playlist_count.str());
-	replace_all(output, "{playlist}", format_playlist_text(state));
+	replace_all(output, "{playlist}",
+		    format_playlist_text(context, state));
 
 	return output;
 }
@@ -290,6 +326,9 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 					     static_cast<double>(duration)
 				   : 0.0;
 
+	const auto &pl = effective_playlist(context, state);
+	const int pl_index = effective_playlist_index(context, state);
+
 	std::ostringstream json;
 	json << "{\n";
 	json << "  \"available\": " << (state.available ? "true" : "false")
@@ -323,11 +362,11 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 	     << "\",\n";
 
 	/* Playlist array */
-	json << "  \"current_playlist_index\": " << state.current_playlist_index
+	json << "  \"current_playlist_index\": " << pl_index
 	     << ",\n";
 	json << "  \"playlist\": [\n";
-	for (size_t i = 0; i < state.playlist.size(); ++i) {
-		const auto &item = state.playlist[i];
+	for (size_t i = 0; i < pl.size(); ++i) {
+		const auto &item = pl[i];
 		json << "    {\n";
 		json << "      \"index\": " << item.index << ",\n";
 		json << "      \"title\": \"" << escape_json(item.title)
@@ -339,7 +378,7 @@ void write_json_file(const SourceContext &context, const MediaState &state)
 		json << "      \"duration_sec\": " << item.duration_sec
 		     << "\n";
 		json << "    }";
-		if (i + 1 < state.playlist.size())
+		if (i + 1 < pl.size())
 			json << ",";
 		json << "\n";
 	}
@@ -424,6 +463,7 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "progress_width", 24);
 	obs_data_set_default_int(settings, "display_mode", 1);
 	obs_data_set_default_bool(settings, "show_composer", true);
+	obs_data_set_default_bool(settings, "show_full_playlist", true);
 	obs_data_set_default_string(settings, "json_output_path",
 				    default_json_path().c_str());
 }
@@ -447,6 +487,8 @@ obs_properties_t *source_get_properties(void *)
 				      "Progress width", 4, 80, 1);
 	obs_properties_add_bool(props, "show_composer",
 				"Show composer in UI Card mode");
+	obs_properties_add_bool(props, "show_full_playlist",
+				"Show full playlist (all tracks)");
 	obs_properties_add_int_slider(props, "refresh_ms",
 				      "Refresh interval (ms)", 250, 5000,
 				      250);
@@ -473,6 +515,8 @@ void source_update(void *data, obs_data_t *settings)
 		static_cast<int>(obs_data_get_int(settings, "progress_width"));
 	context->display_mode = static_cast<int>(obs_data_get_int(settings, "display_mode"));
 	context->show_composer = obs_data_get_bool(settings, "show_composer");
+	context->show_full_playlist =
+		obs_data_get_bool(settings, "show_full_playlist");
 	context->json_output_path =
 		obs_data_get_string(settings, "json_output_path");
 
@@ -519,6 +563,47 @@ void write_overlay_config(const std::string &json_path)
 	}
 }
 
+/**
+ * Log the complete overlay URL with ?json= query parameter
+ * for easy configuration of the OBS browser source.
+ */
+void log_overlay_url(const std::string &json_path)
+{
+	/* Find the overlay HTML file */
+	char *overlay_path = obs_module_file("overlay/index.html");
+	if (!overlay_path)
+		return;
+
+	std::string overlay_str(overlay_path);
+	bfree(overlay_path);
+
+	/* Convert backslashes to forward slashes for URL */
+	std::string url_path = overlay_str;
+	for (auto &ch : url_path) {
+		if (ch == '\\')
+			ch = '/';
+	}
+
+	std::string json_url = json_path;
+	for (auto &ch : json_url) {
+		if (ch == '\\')
+			ch = '/';
+	}
+
+	blog(LOG_INFO,
+	     "[obs-wmp-legacy] ========================================");
+	blog(LOG_INFO,
+	     "[obs-wmp-legacy] For the 'Now Playing' browser source, use:");
+	blog(LOG_INFO,
+	     "[obs-wmp-legacy]   %s?json=%s",
+	     url_path.c_str(), json_url.c_str());
+	blog(LOG_INFO,
+	     "[obs-wmp-legacy] JSON output path: %s",
+	     json_path.c_str());
+	blog(LOG_INFO,
+	     "[obs-wmp-legacy] ========================================");
+}
+
 void *source_create(obs_data_t *settings, obs_source_t *source)
 {
 	auto *context = new SourceContext();
@@ -527,6 +612,7 @@ void *source_create(obs_data_t *settings, obs_source_t *source)
 
 	source_update(context, settings);
 	write_overlay_config(context->json_output_path);
+	log_overlay_url(context->json_output_path);
 	context->monitor.start();
 
 	return context;

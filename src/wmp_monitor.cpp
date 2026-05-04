@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cwctype>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -132,12 +134,16 @@ MediaState unavailable_state(std::string message,
 }
 
 /* ===================================================================
- *  Subprocess bridge — spawn wmp_bridge.exe and read JSON stdout
+ *  Subprocess bridge — spawn wmp_bridge.exe and read JSON from file
  *
  *  The in-process WMP COM OCX approach is unreliable inside OBS due
  *  to COM apartment conflicts with OBS's threading model.  Instead
  *  we spawn wmp_bridge.exe (a small standalone helper) that performs
- *  the COM work in a clean process and outputs JSON to stdout.
+ *  the COM work in a clean process and outputs JSON.
+ *
+ *  IPC is done via a temp file (--output <path>) rather than pipes
+ *  because CreateProcessWithTokenW (used for de-elevation) cannot
+ *  inherit pipe handles across security boundaries.
  * =================================================================== */
 
 /**
@@ -245,37 +251,65 @@ static HANDLE get_non_elevated_token()
 }
 
 /**
- * Spawn the bridge process and capture its stdout output.
+ * Generate a unique temp file path for bridge output.
+ */
+static std::string make_temp_output_path()
+{
+	wchar_t temp_dir[MAX_PATH + 1] = {};
+	DWORD len = GetTempPathW(MAX_PATH + 1, temp_dir);
+	if (len == 0)
+		return {};
+
+	std::filesystem::path dir(temp_dir);
+	std::string name = "obs-wmp-bridge-" +
+			   std::to_string(GetCurrentProcessId()) + "-" +
+			   std::to_string(GetTickCount64()) + ".json";
+	return (dir / name).string();
+}
+
+/**
+ * Read the entire contents of a file as a string.
+ */
+static std::string read_file_contents(const std::string &path)
+{
+	std::ifstream file(path, std::ios::binary);
+	if (!file)
+		return {};
+	std::ostringstream ss;
+	ss << file.rdbuf();
+	return ss.str();
+}
+
+/**
+ * Spawn the bridge process and read its output from a temp file.
  *
  * When the host process (OBS) is running elevated, the bridge is
  * launched with a de-elevated token so it can connect to the user's
  * non-elevated WMP instance via COM Remote mode.
  *
+ * Uses temp file IPC instead of pipes because CreateProcessWithTokenW
+ * cannot inherit pipe handles across security boundaries.
+ *
  * Returns the raw JSON string, or empty on failure.
  */
 static std::string run_bridge_process(const std::string &exe_path)
 {
-	SECURITY_ATTRIBUTES sa = {};
-	sa.nLength = sizeof(sa);
-	sa.bInheritHandle = TRUE;
-
-	HANDLE read_pipe = nullptr, write_pipe = nullptr;
-	if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0))
+	/* Generate temp file path for IPC */
+	std::string temp_path = make_temp_output_path();
+	if (temp_path.empty())
 		return {};
-	/* Only the write end should be inherited by the child */
-	SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+
+	/* Build command line: "exe_path" --output "temp_path" */
+	std::wstring wpath = utf8_to_wide(exe_path);
+	std::wstring wtemp = utf8_to_wide(temp_path);
+	std::wstring cmd_line = L"\"" + wpath + L"\" --output \"" + wtemp + L"\"";
 
 	STARTUPINFOW si = {};
 	si.cb = sizeof(si);
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.hStdOutput = write_pipe;
-	si.hStdError = write_pipe;
-	si.hStdInput = nullptr;
+	si.dwFlags = STARTF_USESHOWWINDOW;
 	si.wShowWindow = SW_HIDE;
 
 	PROCESS_INFORMATION pi = {};
-
-	std::wstring wpath = utf8_to_wide(exe_path);
 	BOOL ok = FALSE;
 
 	/* Try de-elevated launch first when running as Administrator */
@@ -287,7 +321,7 @@ static std::string run_bridge_process(const std::string &exe_path)
 	if (deelev_token) {
 		ok = CreateProcessWithTokenW(
 			deelev_token, 0 /* dwLogonFlags */,
-			wpath.c_str(), nullptr /* lpCommandLine */,
+			wpath.c_str(), cmd_line.data(),
 			CREATE_NO_WINDOW, nullptr /* lpEnvironment */,
 			nullptr /* lpCurrentDirectory */, &si, &pi);
 
@@ -296,72 +330,44 @@ static std::string run_bridge_process(const std::string &exe_path)
 			     "[obs-wmp-legacy] de-elevated launch failed "
 			     "(0x%08lX), falling back to normal launch",
 			     (unsigned long)GetLastError());
+		} else {
+			blog(LOG_INFO,
+			     "[obs-wmp-legacy] bridge launched de-elevated");
 		}
 		CloseHandle(deelev_token);
 	}
 
 	if (!ok) {
 		/* Normal launch (not elevated, or de-elevation failed) */
-		ok = CreateProcessW(wpath.c_str(), nullptr, nullptr, nullptr,
-				    TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
+		ok = CreateProcessW(nullptr, cmd_line.data(), nullptr, nullptr,
+				    FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
 				    &si, &pi);
 	}
 
-	/* Close the write end in our process so ReadFile can detect EOF */
-	CloseHandle(write_pipe);
-
 	if (!ok) {
-		CloseHandle(read_pipe);
+		/* Clean up temp file on failure */
+		std::error_code ec;
+		std::filesystem::remove(temp_path, ec);
 		return {};
 	}
 
-	/* Read stdout with a 5-second timeout */
-	std::string output;
-	output.reserve(8192);
-	char buf[4096];
-	const ULONGLONG deadline = GetTickCount64() + 5000;
-
-	for (;;) {
-		if (GetTickCount64() >= deadline)
-			break;
-
-		/* If the process has exited, drain remaining output */
-		if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
-			DWORD bytes = 0;
-			while (ReadFile(read_pipe, buf, sizeof(buf), &bytes,
-					nullptr) &&
-			       bytes > 0) {
-				output.append(buf, bytes);
-			}
-			break;
-		}
-
-		DWORD avail = 0;
-		if (PeekNamedPipe(read_pipe, nullptr, 0, nullptr, &avail,
-				  nullptr) &&
-		    avail > 0) {
-			DWORD bytes = 0;
-			DWORD to_read = static_cast<DWORD>(
-				(std::min<size_t>)(avail, sizeof(buf)));
-			if (ReadFile(read_pipe, buf, to_read, &bytes,
-				     nullptr) &&
-			    bytes > 0) {
-				output.append(buf, bytes);
-			}
-		} else {
-			Sleep(10);
-		}
-	}
-
-	/* Kill the process if it hasn't exited yet */
-	if (WaitForSingleObject(pi.hProcess, 0) != WAIT_OBJECT_0) {
+	/* Wait for the process to complete (5-second timeout) */
+	DWORD wait_result = WaitForSingleObject(pi.hProcess, 5000);
+	if (wait_result != WAIT_OBJECT_0) {
+		/* Kill the process if it hasn't exited yet */
 		TerminateProcess(pi.hProcess, 1);
 		WaitForSingleObject(pi.hProcess, 1000);
 	}
 
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
-	CloseHandle(read_pipe);
+
+	/* Read the output from the temp file */
+	std::string output = read_file_contents(temp_path);
+
+	/* Clean up temp file */
+	std::error_code ec;
+	std::filesystem::remove(temp_path, ec);
 
 	return output;
 }
@@ -437,16 +443,30 @@ static bool json_bool_value(const std::string &json, const std::string &key)
 	return pos < json.size() && json[pos] == 't';
 }
 
-static std::vector<PlaylistItem> parse_playlist_json(const std::string &json)
+static std::vector<PlaylistItem>
+parse_playlist_array(const std::string &json, const std::string &array_key)
 {
 	std::vector<PlaylistItem> items;
-	auto start = json.find("\"playlist\":[");
+	std::string search = "\"" + array_key + "\":[";
+	auto start = json.find(search);
 	if (start == std::string::npos)
 		return items;
-	start += 12; /* skip past "playlist":[ */
+	start += search.size();
+
+	/* Find the matching closing bracket, handling nested objects */
+	int depth = 1;
+	size_t list_end = std::string::npos;
+	for (size_t i = start; i < json.size() && depth > 0; ++i) {
+		if (json[i] == '[')
+			++depth;
+		else if (json[i] == ']') {
+			--depth;
+			if (depth == 0)
+				list_end = i;
+		}
+	}
 
 	size_t pos = start;
-	auto list_end = json.find(']', start);
 	while (pos < json.size() &&
 	       (list_end == std::string::npos || pos < list_end)) {
 		auto obj_start = json.find('{', pos);
@@ -537,9 +557,15 @@ MediaState capture_via_bridge(const std::string &bridge_exe,
 	state.timeline_available = state.end_ms > 0;
 	state.captured_at = std::chrono::steady_clock::now();
 
+	state.current_playlist_name =
+		json_string_value(json, "current_playlist_name");
 	state.current_playlist_index =
 		static_cast<int>(json_int_value(json, "current_playlist_index"));
-	state.playlist = parse_playlist_json(json);
+	state.playlist = parse_playlist_array(json, "playlist");
+
+	state.full_playlist_index =
+		static_cast<int>(json_int_value(json, "full_playlist_index"));
+	state.full_playlist = parse_playlist_array(json, "full_playlist");
 
 	return state;
 }

@@ -46,9 +46,14 @@ struct MediaState {
 	std::chrono::steady_clock::time_point captured_at =
 		std::chrono::steady_clock::now();
 
-	/* Playlist data */
+	/* Current playlist (the active playback queue, may be a subset) */
 	std::vector<PlaylistItem> playlist;
 	int current_playlist_index = -1;
+	std::string current_playlist_name;
+
+	/* Full source playlist (from IWMPPlaylistCollection, all tracks) */
+	std::vector<PlaylistItem> full_playlist;
+	int full_playlist_index = -1;
 };
 
 class WmpMonitor {

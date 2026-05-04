@@ -20,10 +20,12 @@ Windows Media Player (Legacy) does not register itself in the Running Object Tab
 1. A background worker thread in the plugin spawns `wmp_bridge.exe` — a small standalone helper — once per poll cycle.
 2. The bridge process creates an in-process WMP OCX via `CoCreateInstance` in a clean COM environment.
 3. It sets a client site implementing `IWMPRemoteMediaServices` with service type `"Remote"`, causing the OCX to attach to the already-running `wmplayer.exe` process.
-4. The bridge extracts all media metadata and outputs a single JSON object to stdout, then exits.
-5. The plugin reads the JSON output via a pipe and updates the OBS source.
+4. The bridge extracts all media metadata (including the full source playlist via `IWMPPlaylistCollection`) and writes a JSON object to a temp file, then exits.
+5. The plugin reads the JSON from the temp file and updates the OBS source.
 
 > **Why a subprocess?** Running WMP COM automation in-process inside OBS is unreliable due to COM apartment conflicts with OBS's threading model and its embedded Chromium (CEF) browser. The subprocess approach guarantees a clean COM environment on every poll.
+
+> **Why temp files instead of pipes?** The plugin uses temp file IPC (`--output <path>`) instead of stdout pipes because `CreateProcessWithTokenW` (used for de-elevation) cannot inherit pipe handles across security boundaries.
 
 ### Administrator Compatibility
 
@@ -121,6 +123,7 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 | **Format** | Output template (used in Template Text mode). |
 | **Progress width** | Character width of `{progress_bar}`. |
 | **Show composer** | Display composer information in UI Card mode when available. |
+| **Show full playlist** | Show all tracks from the source playlist (via `IWMPPlaylistCollection`). When off, only the current playback queue is shown. Default: on. |
 | **Refresh interval** | COM polling interval in milliseconds. |
 | **Hide when no media** | Render nothing when WMP is not running or has no media loaded. |
 | **JSON output path** | File path for the JSON data file consumed by the overlay. Default: `%APPDATA%/obs-wmp-legacy/now-playing.json`. |

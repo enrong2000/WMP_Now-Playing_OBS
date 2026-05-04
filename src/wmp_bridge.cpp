@@ -1,9 +1,16 @@
 /* wmp_bridge.exe — Standalone helper that connects to a running
    Windows Media Player (Legacy) instance via COM Remote mode and
-   outputs the current media state as a single JSON object to stdout.
-   
+   outputs the current media state as a single JSON object.
+
    This runs as a separate process to avoid COM apartment conflicts
-   with OBS's in-process threading model. */
+   with OBS's in-process threading model.
+
+   Usage:
+     wmp_bridge.exe                     — write JSON to stdout
+     wmp_bridge.exe --output <path>     — write JSON to file (for
+                                          de-elevation IPC where
+                                          pipes can't be inherited)
+*/
 
 #include <Windows.h>
 #include <ObjBase.h>
@@ -13,7 +20,9 @@
 #import "wmp.dll" rename_namespace("WMPLib") named_guids
 
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <vector>
 #include <io.h>
 #include <fcntl.h>
 
@@ -163,19 +172,227 @@ static std::string json_escape(const std::string &s)
 	return out;
 }
 
+/* ---- Playlist item serialization ---- */
+
+struct TrackInfo {
+	int index;
+	std::string title;
+	std::string artist;
+	std::string album;
+	double duration_sec;
+	std::string source_url;
+};
+
+static std::string serialize_track_list(const std::vector<TrackInfo> &tracks)
+{
+	std::string items;
+	for (size_t i = 0; i < tracks.size(); ++i) {
+		const auto &t = tracks[i];
+		char buf[64];
+		snprintf(buf, sizeof(buf), "%.3f", t.duration_sec);
+		if (!items.empty())
+			items += ",";
+		items += "{\"index\":" + std::to_string(t.index) +
+			 ",\"title\":\"" + json_escape(t.title) +
+			 "\",\"artist\":\"" + json_escape(t.artist) +
+			 "\",\"album\":\"" + json_escape(t.album) +
+			 "\",\"duration_sec\":" + std::string(buf) + "}";
+	}
+	return "[" + items + "]";
+}
+
+static std::vector<TrackInfo>
+enumerate_playlist(WMPLib::IWMPPlaylistPtr pl,
+		   const std::string &current_source_url, int &out_index)
+{
+	std::vector<TrackInfo> tracks;
+	out_index = -1;
+	if (!pl)
+		return tracks;
+
+	long count = 0;
+	try {
+		count = pl->count;
+	} catch (...) {
+		return tracks;
+	}
+
+	for (long i = 0; i < count; ++i) {
+		WMPLib::IWMPMediaPtr pm;
+		try {
+			HRESULT phr = pl->get_Item(i, &pm);
+			if (FAILED(phr) || !pm)
+				continue;
+		} catch (...) {
+			continue;
+		}
+
+		TrackInfo t;
+		t.index = static_cast<int>(i);
+		try {
+			t.title = bstr_to_utf8(pm->name);
+		} catch (...) {
+		}
+		try {
+			t.artist = bstr_to_utf8(
+				pm->getItemInfo(_bstr_t(L"Author")));
+		} catch (...) {
+		}
+		try {
+			t.album = bstr_to_utf8(
+				pm->getItemInfo(_bstr_t(L"WM/AlbumTitle")));
+		} catch (...) {
+		}
+		try {
+			t.duration_sec = pm->duration;
+		} catch (...) {
+		}
+		try {
+			t.source_url = bstr_to_utf8(pm->sourceURL);
+		} catch (...) {
+		}
+
+		if (out_index < 0 && !current_source_url.empty() &&
+		    t.source_url == current_source_url)
+			out_index = static_cast<int>(i);
+
+		tracks.push_back(std::move(t));
+	}
+	return tracks;
+}
+
+/* ---- Try to find the full source playlist via IWMPPlaylistCollection ---- */
+
+static std::vector<TrackInfo>
+find_full_playlist(WMPLib::IWMPPlayer4Ptr player,
+		   const std::string &current_playlist_name,
+		   const std::string &current_source_url,
+		   int &out_full_index)
+{
+	out_full_index = -1;
+	std::vector<TrackInfo> result;
+
+	if (!player || current_playlist_name.empty())
+		return result;
+
+	try {
+		WMPLib::IWMPPlaylistCollectionPtr plcol =
+			player->playlistCollection;
+		if (!plcol)
+			return result;
+
+		/* Search for a playlist with the same name as the current one */
+		std::wstring wname;
+
+		/* Convert the playlist name from UTF-8 to wide string */
+		int needed = MultiByteToWideChar(
+			CP_UTF8, 0, current_playlist_name.c_str(),
+			static_cast<int>(current_playlist_name.size()), nullptr,
+			0);
+		if (needed > 0) {
+			wname.resize(static_cast<size_t>(needed));
+			MultiByteToWideChar(
+				CP_UTF8, 0, current_playlist_name.c_str(),
+				static_cast<int>(current_playlist_name.size()),
+				wname.data(), needed);
+		}
+
+		WMPLib::IWMPPlaylistArrayPtr arr =
+			plcol->getByName(_bstr_t(wname.c_str()));
+		if (!arr)
+			return result;
+
+		long arr_count = arr->count;
+		for (long a = 0; a < arr_count; ++a) {
+			WMPLib::IWMPPlaylistPtr full_pl;
+			try {
+				full_pl = arr->Item(a);
+			} catch (...) {
+				continue;
+			}
+			if (!full_pl)
+				continue;
+
+			long full_count = 0;
+			try {
+				full_count = full_pl->count;
+			} catch (...) {
+				continue;
+			}
+
+			/* Use the playlist with the most items
+			   (the source playlist should be larger than
+			   the truncated current queue) */
+			if (full_count > static_cast<long>(result.size())) {
+				result = enumerate_playlist(
+					full_pl, current_source_url,
+					out_full_index);
+			}
+		}
+	} catch (...) {
+	}
+
+	return result;
+}
+
+/* ---- Output helpers ---- */
+
+static FILE *open_output(const char *output_path)
+{
+	if (output_path && output_path[0]) {
+		/* Convert to wide for proper Unicode path support */
+		int needed = MultiByteToWideChar(
+			CP_UTF8, 0, output_path,
+			static_cast<int>(strlen(output_path)), nullptr, 0);
+		if (needed > 0) {
+			std::wstring wpath(static_cast<size_t>(needed), L'\0');
+			MultiByteToWideChar(
+				CP_UTF8, 0, output_path,
+				static_cast<int>(strlen(output_path)),
+				wpath.data(), needed);
+			FILE *f = nullptr;
+			if (_wfopen_s(&f, wpath.c_str(), L"wb") == 0 && f)
+				return f;
+		}
+		/* Fallback: try ANSI */
+		FILE *f = nullptr;
+		if (fopen_s(&f, output_path, "wb") == 0 && f)
+			return f;
+	}
+	return stdout;
+}
+
 /* ---- Main ---- */
 
-int wmain()
+int wmain(int argc, wchar_t *argv[])
 {
 	/* Ensure stdout is in binary mode for clean UTF-8 output */
 	_setmode(_fileno(stdout), _O_BINARY);
 
+	/* Parse --output argument */
+	std::string output_path;
+	for (int i = 1; i < argc; ++i) {
+		if (wcscmp(argv[i], L"--output") == 0 && i + 1 < argc) {
+			output_path = wide_to_utf8(argv[i + 1]);
+			++i;
+		}
+	}
+
+	FILE *out = open_output(output_path.c_str());
+	const bool using_file = (out != stdout);
+
+	auto emit_error = [&](const char *fmt, unsigned long code) {
+		fprintf(out, fmt, code);
+		fflush(out);
+		if (using_file)
+			fclose(out);
+	};
+
 	HRESULT hr = OleInitialize(nullptr);
 	if (FAILED(hr)) {
-		fprintf(stdout,
+		emit_error(
 			"{\"error\":\"OleInitialize failed: 0x%08lX\"}\n",
 			(unsigned long)hr);
-		fflush(stdout);
 		return 1;
 	}
 
@@ -184,10 +401,9 @@ int wmain()
 	hr = CoCreateInstance(__uuidof(WMPLib::WindowsMediaPlayer), nullptr,
 			     CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&ole));
 	if (FAILED(hr) || !ole) {
-		fprintf(stdout,
+		emit_error(
 			"{\"error\":\"CoCreateInstance failed: 0x%08lX\"}\n",
 			(unsigned long)hr);
-		fflush(stdout);
 		site->Release();
 		OleUninitialize();
 		return 1;
@@ -195,10 +411,9 @@ int wmain()
 
 	hr = ole->SetClientSite(site);
 	if (FAILED(hr)) {
-		fprintf(stdout,
+		emit_error(
 			"{\"error\":\"SetClientSite failed: 0x%08lX\"}\n",
 			(unsigned long)hr);
-		fflush(stdout);
 		ole->Release();
 		site->Release();
 		OleUninitialize();
@@ -213,10 +428,9 @@ int wmain()
 	hr = ole->QueryInterface(__uuidof(WMPLib::IWMPPlayer4),
 				 reinterpret_cast<void **>(&player));
 	if (FAILED(hr) || !player) {
-		fprintf(stdout,
+		emit_error(
 			"{\"error\":\"QueryInterface IWMPPlayer4 failed: 0x%08lX\"}\n",
 			(unsigned long)hr);
-		fflush(stdout);
 		ole->Close(OLECLOSE_NOSAVE);
 		ole->Release();
 		site->Release();
@@ -255,10 +469,13 @@ int wmain()
 	}
 
 	if (!media) {
-		fprintf(stdout, "{\"available\":false,\"status\":\"%s\","
-				"\"diagnostic\":\"no currentMedia\"}\n",
+		fprintf(out,
+			"{\"available\":false,\"status\":\"%s\","
+			"\"diagnostic\":\"no currentMedia\"}\n",
 			status_str.c_str());
-		fflush(stdout);
+		fflush(out);
+		if (using_file)
+			fclose(out);
 		player = nullptr;
 		ole->Close(OLECLOSE_NOSAVE);
 		ole->Release();
@@ -270,6 +487,7 @@ int wmain()
 	/* Extract metadata */
 	std::string title, artist, album, album_artist, composer;
 	double duration = 0, position = 0;
+	std::string source_url;
 	try {
 		title = bstr_to_utf8(media->name);
 	} catch (...) {
@@ -304,80 +522,35 @@ int wmain()
 			position = controls->currentPosition;
 	} catch (...) {
 	}
+	try {
+		source_url = bstr_to_utf8(media->sourceURL);
+	} catch (...) {
+	}
 
-	/* Extract playlist */
-	std::string playlist_json = "[]";
+	/* Extract current playlist (the active playback queue) */
 	int current_index = -1;
+	std::vector<TrackInfo> current_tracks;
+	std::string current_playlist_name;
 	try {
 		WMPLib::IWMPPlaylistPtr pl = player->currentPlaylist;
 		if (pl) {
-			long count = pl->count;
-			std::string source_url;
 			try {
-				source_url = bstr_to_utf8(media->sourceURL);
+				current_playlist_name =
+					bstr_to_utf8(pl->name);
 			} catch (...) {
 			}
-
-			std::string items;
-			for (long i = 0; i < count; ++i) {
-				WMPLib::IWMPMediaPtr pm;
-				try {
-					HRESULT phr = pl->get_Item(i, &pm);
-					if (FAILED(phr) || !pm)
-						continue;
-				} catch (...) {
-					continue;
-				}
-
-				std::string pt, pa, pal;
-				double pdur = 0;
-				try {
-					pt = bstr_to_utf8(pm->name);
-				} catch (...) {
-				}
-				try {
-					pa = bstr_to_utf8(pm->getItemInfo(
-						_bstr_t(L"Author")));
-				} catch (...) {
-				}
-				try {
-					pal = bstr_to_utf8(pm->getItemInfo(
-						_bstr_t(L"WM/AlbumTitle")));
-				} catch (...) {
-				}
-				try {
-					pdur = pm->duration;
-				} catch (...) {
-				}
-
-				if (current_index < 0 && !source_url.empty()) {
-					try {
-						std::string su = bstr_to_utf8(
-							pm->sourceURL);
-						if (su == source_url)
-							current_index =
-								static_cast<int>(i);
-					} catch (...) {
-					}
-				}
-
-				if (!items.empty())
-					items += ",";
-				char buf[64];
-				snprintf(buf, sizeof(buf), "%.3f", pdur);
-				items += "{\"index\":" + std::to_string(i) +
-					 ",\"title\":\"" + json_escape(pt) +
-					 "\",\"artist\":\"" +
-					 json_escape(pa) +
-					 "\",\"album\":\"" +
-					 json_escape(pal) +
-					 "\",\"duration_sec\":" +
-					 std::string(buf) + "}";
-			}
-			playlist_json = "[" + items + "]";
+			current_tracks = enumerate_playlist(pl, source_url,
+							    current_index);
 		}
 	} catch (...) {
 	}
+
+	/* Try to enumerate the full source playlist via
+	   IWMPPlaylistCollection (the currentPlaylist in COM Remote
+	   mode may only contain a subset of the source playlist) */
+	int full_index = -1;
+	std::vector<TrackInfo> full_tracks = find_full_playlist(
+		player, current_playlist_name, source_url, full_index);
 
 	/* Format position/duration as ms */
 	long long pos_ms = static_cast<long long>(position * 1000.0);
@@ -385,7 +558,7 @@ int wmain()
 	double progress = duration > 0 ? position / duration : 0;
 
 	/* Output JSON */
-	fprintf(stdout,
+	fprintf(out,
 		"{\"available\":true,"
 		"\"title\":\"%s\","
 		"\"artist\":\"%s\","
@@ -396,14 +569,22 @@ int wmain()
 		"\"position_ms\":%lld,"
 		"\"duration_ms\":%lld,"
 		"\"progress\":%.6f,"
+		"\"current_playlist_name\":\"%s\","
 		"\"current_playlist_index\":%d,"
-		"\"playlist\":%s}\n",
+		"\"playlist\":%s,"
+		"\"full_playlist_index\":%d,"
+		"\"full_playlist\":%s}\n",
 		json_escape(title).c_str(), json_escape(artist).c_str(),
 		json_escape(album).c_str(),
 		json_escape(album_artist).c_str(),
 		json_escape(composer).c_str(), status_str.c_str(), pos_ms,
-		dur_ms, progress, current_index, playlist_json.c_str());
-	fflush(stdout);
+		dur_ms, progress,
+		json_escape(current_playlist_name).c_str(), current_index,
+		serialize_track_list(current_tracks).c_str(), full_index,
+		serialize_track_list(full_tracks).c_str());
+	fflush(out);
+	if (using_file)
+		fclose(out);
 
 	/* Cleanup */
 	media = nullptr;

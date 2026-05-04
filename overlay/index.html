@@ -141,7 +141,10 @@
       /* When running inside OBS browser (http://absolute/...) without
          a config.json, try to find the now-playing.json by probing
          the OBS plugin-config sidecar written by the C++ plugin, or
-         by probing well-known APPDATA paths. */
+         by probing well-known APPDATA paths.
+         
+         Supports non-standard profile locations (e.g., relocated via
+         Windows folder properties to E:\Documents and Settings\...) */
       if (!isObsAbsoluteOrigin()) return '';
 
       const pathMatch = window.location.pathname.match(/^\/([A-Za-z]:)\//);
@@ -173,33 +176,81 @@
         }
       } catch (e) {}
 
-      /* 3. Probe each candidate username for the JSON file */
+      /* Collect all drives to probe (the drive from the URL + common drives) */
+      const drives = new Set([drive]);
+      ['C:', 'D:', 'E:', 'F:'].forEach(d => drives.add(d));
+
+      /* 3. Probe each candidate username on each drive */
       for (const name of candidates) {
-        const path = `${drive}/Users/${name}/${jsonRelPath}`;
-        const url = await probeJsonUrl(path);
-        if (url) {
-          localStorage.setItem('obs_wmp_json_url', path);
-          return url;
+        for (const d of drives) {
+          const path = `${d}/Users/${name}/${jsonRelPath}`;
+          const url = await probeJsonUrl(path);
+          if (url) {
+            localStorage.setItem('obs_wmp_json_url', path);
+            return url;
+          }
         }
       }
 
-      /* 4. Try the plugin-config sidecar for each candidate */
+      /* 4. Try the plugin-config sidecar on each drive for each candidate */
       for (const name of candidates) {
-        const cfgPath = `${drive}/Users/${name}/${pluginCfgRel}`;
-        const cfgUrl = toBrowserUrl(cfgPath);
-        if (!cfgUrl) continue;
-        try {
-          const r = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
-          if (r.ok) {
-            const cfg = await r.json();
-            const jp = cfg.jsonUrl || cfg.jsonPath || '';
-            if (jp) {
-              const url = toBrowserUrl(jp);
-              localStorage.setItem('obs_wmp_json_url', jp);
-              return url;
+        for (const d of drives) {
+          const cfgPath = `${d}/Users/${name}/${pluginCfgRel}`;
+          const cfgUrl = toBrowserUrl(cfgPath);
+          if (!cfgUrl) continue;
+          try {
+            const r = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
+            if (r.ok) {
+              const cfg = await r.json();
+              const jp = cfg.jsonUrl || cfg.jsonPath || '';
+              if (jp) {
+                const url = toBrowserUrl(jp);
+                localStorage.setItem('obs_wmp_json_url', jp);
+                return url;
+              }
             }
+          } catch (e) {}
+        }
+      }
+
+      /* 5. Probe non-standard profile paths (Windows allows relocating
+            user folders to custom locations via folder Properties).
+            Common patterns include:
+              <drive>/Documents and Settings/AppData/Roaming/...
+              <drive>/UserData/AppData/Roaming/...
+         */
+      const nonStandardBases = [
+        'Documents and Settings',
+        'UserData',
+        'Profile',
+      ];
+      for (const d of drives) {
+        for (const base of nonStandardBases) {
+          /* Try the now-playing.json directly */
+          const directPath = `${d}/${base}/${jsonRelPath}`;
+          const directUrl = await probeJsonUrl(directPath);
+          if (directUrl) {
+            localStorage.setItem('obs_wmp_json_url', directPath);
+            return directUrl;
           }
-        } catch (e) {}
+
+          /* Try the overlay-config.json sidecar */
+          const cfgPath = `${d}/${base}/${pluginCfgRel}`;
+          const cfgUrl = toBrowserUrl(cfgPath);
+          if (!cfgUrl) continue;
+          try {
+            const r = await fetch(withCacheBust(cfgUrl), { cache: 'no-store' });
+            if (r.ok) {
+              const cfg = await r.json();
+              const jp = cfg.jsonUrl || cfg.jsonPath || '';
+              if (jp) {
+                const url = toBrowserUrl(jp);
+                localStorage.setItem('obs_wmp_json_url', jp);
+                return url;
+              }
+            }
+          } catch (e) {}
+        }
       }
 
       return '';

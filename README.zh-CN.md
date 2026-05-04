@@ -20,10 +20,12 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 1. 插件中的后台工作线程在每个轮询周期启动 `wmp_bridge.exe`——一个独立的小型辅助程序。
 2. 桥接进程在干净的 COM 环境中通过 `CoCreateInstance` 创建进程内 WMP OCX 实例。
 3. 它设置一个实现了 `IWMPRemoteMediaServices` 的客户端站点，服务类型为 `"Remote"`，使 OCX 附加到已运行的 `wmplayer.exe` 进程。
-4. 桥接程序提取所有媒体元数据，将单个 JSON 对象输出到标准输出，然后退出。
-5. 插件通过管道读取 JSON 输出并更新 OBS 源。
+4. 桥接程序提取所有媒体元数据（包括通过 `IWMPPlaylistCollection` 获取的完整源播放列表），将 JSON 对象写入临时文件，然后退出。
+5. 插件从临时文件读取 JSON 数据并更新 OBS 源。
 
 > **为什么使用子进程？** 在 OBS 进程内直接运行 WMP COM 自动化是不可靠的，因为 OBS 的线程模型及其内嵌的 Chromium（CEF）浏览器会导致 COM 单元冲突。子进程方式保证每次轮询都在干净的 COM 环境中运行。
+
+> **为什么使用临时文件而非管道？** 插件使用临时文件 IPC（`--output <路径>`）而非标准输出管道，因为 `CreateProcessWithTokenW`（用于降权）无法跨安全边界继承管道句柄。
 
 ### 管理员权限兼容
 
@@ -121,6 +123,7 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 | **Format** | 输出模板（在 Template Text 模式下使用）。 |
 | **Progress width** | `{progress_bar}` 的字符宽度。 |
 | **Show composer** | 在 UI Card 模式下显示作曲家信息（如有）。 |
+| **Show full playlist** | 显示源播放列表的所有曲目（通过 `IWMPPlaylistCollection`）。关闭时仅显示当前播放队列。默认：开启。 |
 | **Refresh interval** | COM 轮询间隔（毫秒）。 |
 | **Hide when no media** | 当 WMP 未运行或未加载媒体时不显示任何内容。 |
 | **JSON output path** | 叠加层使用的 JSON 数据文件路径。默认：`%APPDATA%/obs-wmp-legacy/now-playing.json`。 |
