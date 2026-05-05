@@ -30,11 +30,13 @@ constexpr int kDisplayModeUiCardText = 1;
 constexpr int kDisplayModeEmbeddedOverlay = 2;
 constexpr int kOverlayModeMinimized = 0;
 constexpr int kOverlayModeMaximized = 1;
-constexpr int kDefaultOverlayWidth = 520;
+constexpr int kMinOverlayWidth = 200;
+constexpr int kMaxOverlayWidth = 450;
+constexpr int kDefaultOverlayWidth = kMaxOverlayWidth;
 constexpr int kDefaultOverlayHeight = 520;
-constexpr int kMaximizedOverlayMinWidth = 570;
-constexpr int kMaximizedOverlayBaseHeight = 940;
-constexpr int kMaximizedOverlayTrackHeight = 100;
+constexpr int kMaximizedOverlayRecommendedHeight = 720;
+constexpr int kMaximizedQueueSingle = 0;
+constexpr int kMaximizedQueueMultiple = 1;
 
 std::string default_json_path()
 {
@@ -71,6 +73,7 @@ struct SourceContext {
 	int overlay_height = kDefaultOverlayHeight;
 	int upcoming_tracks = 3;
 	int compact_playlist_reveal_ms = 3000;
+	int maximized_queue_mode = kMaximizedQueueMultiple;
 	float update_elapsed = 0.0f;
 	std::string last_text;
 	std::string json_output_path;
@@ -79,19 +82,15 @@ struct SourceContext {
 
 int effective_overlay_width(const SourceContext &context)
 {
-	if (context.overlay_work_mode == kOverlayModeMaximized)
-		return std::max(context.overlay_width, kMaximizedOverlayMinWidth);
-	return context.overlay_width;
+	return std::clamp(context.overlay_width, kMinOverlayWidth,
+			  kMaxOverlayWidth);
 }
 
 int effective_overlay_height(const SourceContext &context)
 {
-	if (context.overlay_work_mode == kOverlayModeMaximized) {
-		const int recommended_height =
-			kMaximizedOverlayBaseHeight +
-			context.upcoming_tracks * kMaximizedOverlayTrackHeight;
-		return std::max(context.overlay_height, recommended_height);
-	}
+	if (context.overlay_work_mode == kOverlayModeMaximized)
+		return std::max(context.overlay_height,
+				kMaximizedOverlayRecommendedHeight);
 	return context.overlay_height;
 }
 
@@ -169,6 +168,11 @@ std::string overlay_mode_query_value(int mode)
 	return mode == kOverlayModeMaximized ? "maximized" : "minimized";
 }
 
+std::string maximized_queue_query_value(int mode)
+{
+	return mode == kMaximizedQueueSingle ? "single" : "multiple";
+}
+
 std::string build_overlay_url(const std::string &local_html,
 			      const SourceContext &context)
 {
@@ -182,6 +186,9 @@ std::string build_overlay_url(const std::string &local_html,
 	url += "&upcoming=" + std::to_string(context.upcoming_tracks);
 	url += "&reveal_ms=" +
 	       std::to_string(context.compact_playlist_reveal_ms);
+	url += "&maximized_queue=" +
+	       std::string(maximized_queue_query_value(
+		       context.maximized_queue_mode));
 	return url;
 }
 
@@ -722,7 +729,7 @@ void update_text_source(SourceContext *context, const std::string &text)
 
 const char *source_get_name(void *)
 {
-	return "Windows Media Player (Legacy) Now Playing";
+	return obs_module_text("WmpNowPlayingSource");
 }
 
 /* Forward declaration - defined below; called by source_update. */
@@ -748,6 +755,8 @@ void source_get_defaults(obs_data_t *settings)
 				 kDefaultOverlayHeight);
 	obs_data_set_default_int(settings, "upcoming_tracks", 3);
 	obs_data_set_default_int(settings, "compact_playlist_reveal_ms", 3000);
+	obs_data_set_default_int(settings, "maximized_queue_mode",
+				 kMaximizedQueueMultiple);
 	obs_data_set_default_bool(settings, "show_composer", true);
 	obs_data_set_default_bool(settings, "show_full_playlist", true);
 	obs_data_set_default_string(settings, "json_output_path",
@@ -758,52 +767,74 @@ obs_properties_t *source_get_properties(void *)
 {
 	obs_properties_t *props = obs_properties_create();
 
-	obs_properties_add_text(props, "app_filter", "App filter",
+	obs_properties_add_text(props, "app_filter",
+				obs_module_text("AppFilter"),
 				OBS_TEXT_DEFAULT);
 
 	obs_property_t *display_mode_list = obs_properties_add_list(
-		props, "display_mode", "Display mode",
+		props, "display_mode", obs_module_text("DisplayMode"),
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(display_mode_list, "Embedded Overlay",
-				  kDisplayModeEmbeddedOverlay);
-	obs_property_list_add_int(display_mode_list, "Template Text",
-				  kDisplayModeTemplateText);
-	obs_property_list_add_int(display_mode_list, "UI Card (Text)",
-				  kDisplayModeUiCardText);
+	obs_property_list_add_int(
+		display_mode_list, obs_module_text("DisplayMode.EmbeddedOverlay"),
+		kDisplayModeEmbeddedOverlay);
+	obs_property_list_add_int(
+		display_mode_list, obs_module_text("DisplayMode.TemplateText"),
+		kDisplayModeTemplateText);
+	obs_property_list_add_int(
+		display_mode_list, obs_module_text("DisplayMode.UiCardText"),
+		kDisplayModeUiCardText);
 
 	obs_property_t *overlay_mode_list = obs_properties_add_list(
-		props, "overlay_work_mode", "Overlay work mode",
+		props, "overlay_work_mode", obs_module_text("OverlayWorkMode"),
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(overlay_mode_list, "Minimized Window",
-				  kOverlayModeMinimized);
-	obs_property_list_add_int(overlay_mode_list, "Maximized Window",
-				  kOverlayModeMaximized);
+	obs_property_list_add_int(
+		overlay_mode_list, obs_module_text("OverlayWorkMode.Minimized"),
+		kOverlayModeMinimized);
+	obs_property_list_add_int(
+		overlay_mode_list, obs_module_text("OverlayWorkMode.Maximized"),
+		kOverlayModeMaximized);
 
 	obs_properties_add_int(props, "overlay_width",
-			       "Embedded overlay width (px)", 200, 4096, 10);
+			       obs_module_text("OverlayWidth"), kMinOverlayWidth,
+			       kMaxOverlayWidth, 10);
 	obs_properties_add_int(props, "overlay_height",
-			       "Embedded overlay height (px)", 100, 4096, 10);
+			       obs_module_text("OverlayHeight"), 100, 4096, 10);
 	obs_properties_add_int_slider(props, "upcoming_tracks",
-				      "Upcoming tracks", 0, 10, 1);
+				      obs_module_text("UpcomingTracks"), 0, 10,
+				      1);
 	obs_properties_add_int_slider(props, "compact_playlist_reveal_ms",
-				      "Compact playlist reveal (ms)", 0,
-				      10000, 250);
+				      obs_module_text("CompactPlaylistRevealMs"),
+				      0, 10000, 250);
 
-	obs_properties_add_text(props, "format", "Format",
+	obs_property_t *maximized_queue_list = obs_properties_add_list(
+		props, "maximized_queue_mode",
+		obs_module_text("MaximizedQueueMode"), OBS_COMBO_TYPE_LIST,
+		OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(
+		maximized_queue_list,
+		obs_module_text("MaximizedQueueMode.Single"),
+		kMaximizedQueueSingle);
+	obs_property_list_add_int(
+		maximized_queue_list,
+		obs_module_text("MaximizedQueueMode.Multiple"),
+		kMaximizedQueueMultiple);
+
+	obs_properties_add_text(props, "format", obs_module_text("Format"),
 				OBS_TEXT_MULTILINE);
 	obs_properties_add_int_slider(props, "progress_width",
-				      "Progress width", 4, 80, 1);
+				      obs_module_text("ProgressWidth"), 4, 80,
+				      1);
 	obs_properties_add_bool(props, "show_composer",
-				"Show composer in UI Card mode");
+				obs_module_text("ShowComposer"));
 	obs_properties_add_bool(props, "show_full_playlist",
-				"Show full playlist (all tracks)");
+				obs_module_text("ShowFullPlaylist"));
 	obs_properties_add_int_slider(props, "refresh_ms",
-				      "Refresh interval (ms)", 250, 5000,
+				      obs_module_text("RefreshMs"), 250, 5000,
 				      250);
 	obs_properties_add_bool(props, "hide_when_empty",
-				"Hide when no media");
+				obs_module_text("HideWhenEmpty"));
 	obs_properties_add_path(props, "json_output_path",
-				"JSON output path (for overlay)",
+				obs_module_text("JsonOutputPath"),
 				OBS_PATH_FILE_SAVE, "JSON (*.json)", nullptr);
 
 	return props;
@@ -819,6 +850,7 @@ void source_update(void *data, obs_data_t *settings)
 	const int old_upcoming_tracks = context->upcoming_tracks;
 	const int old_compact_reveal_ms =
 		context->compact_playlist_reveal_ms;
+	const int old_maximized_queue_mode = context->maximized_queue_mode;
 
 	context->app_filter = obs_data_get_string(settings, "app_filter");
 	context->format = obs_data_get_string(settings, "format");
@@ -833,8 +865,9 @@ void source_update(void *data, obs_data_t *settings)
 	const int new_overlay_work_mode =
 		static_cast<int>(obs_data_get_int(settings,
 						  "overlay_work_mode"));
-	const int new_w = std::max<int>(
-		1, static_cast<int>(obs_data_get_int(settings, "overlay_width")));
+	const int new_w = std::clamp<int>(
+		static_cast<int>(obs_data_get_int(settings, "overlay_width")),
+		kMinOverlayWidth, kMaxOverlayWidth);
 	const int new_h = std::max<int>(
 		1,
 		static_cast<int>(obs_data_get_int(settings, "overlay_height")));
@@ -845,6 +878,12 @@ void source_update(void *data, obs_data_t *settings)
 		static_cast<int>(obs_data_get_int(
 			settings, "compact_playlist_reveal_ms")),
 		0, 10000);
+	context->maximized_queue_mode =
+		static_cast<int>(obs_data_get_int(settings,
+						  "maximized_queue_mode")) ==
+				kMaximizedQueueSingle
+			? kMaximizedQueueSingle
+			: kMaximizedQueueMultiple;
 	context->show_composer = obs_data_get_bool(settings, "show_composer");
 	context->show_full_playlist =
 		obs_data_get_bool(settings, "show_full_playlist");
@@ -873,7 +912,8 @@ void source_update(void *data, obs_data_t *settings)
 		context->json_output_path != old_json_path ||
 		context->overlay_work_mode != old_overlay_work_mode ||
 		context->upcoming_tracks != old_upcoming_tracks ||
-		context->compact_playlist_reveal_ms != old_compact_reveal_ms;
+		context->compact_playlist_reveal_ms != old_compact_reveal_ms ||
+		context->maximized_queue_mode != old_maximized_queue_mode;
 
 	write_overlay_config(*context);
 	ensure_active_source(context);
@@ -902,7 +942,10 @@ void write_overlay_config(const SourceContext &context)
 	     << "\",\n";
 	json << "  \"upcomingTracks\": " << context.upcoming_tracks << ",\n";
 	json << "  \"compactRevealMs\": "
-	     << context.compact_playlist_reveal_ms << "\n";
+	     << context.compact_playlist_reveal_ms << ",\n";
+	json << "  \"maximizedQueueMode\": \""
+	     << maximized_queue_query_value(context.maximized_queue_mode)
+	     << "\"\n";
 	json << "}\n";
 	const std::string json_content = json.str();
 

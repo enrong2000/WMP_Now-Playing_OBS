@@ -44,7 +44,8 @@ body {
 
 .player-window {
   position: relative;
-  width: min(570px, calc(100vw - 16px));
+  width: min(450px, calc(100vw - 16px));
+  max-width: 450px;
   margin-top: 8px;
   overflow: hidden;
   border: 2px solid rgba(215, 232, 245, 0.55);
@@ -94,7 +95,7 @@ body {
   margin: 0;
   color: var(--title);
   font-size: 25px;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1;
   text-shadow:
     0 1px 0 rgba(1, 9, 14, 0.72),
@@ -211,7 +212,7 @@ body {
     linear-gradient(180deg, rgba(21, 35, 47, 0.96), rgba(28, 42, 54, 0.78));
   color: rgba(210, 220, 228, 0.88);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.50);
   text-transform: uppercase;
@@ -318,7 +319,7 @@ body {
   overflow: hidden;
   color: var(--text);
   font-size: 29px;
-  font-weight: 700;
+  font-weight: 620;
   line-height: 1.14;
   text-overflow: ellipsis;
   text-shadow:
@@ -332,7 +333,7 @@ body {
   margin-top: 7px;
   color: var(--muted);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -344,7 +345,7 @@ body {
   margin-top: 8px;
   color: rgba(210, 220, 228, 0.68);
   font-size: 20px;
-  font-weight: 650;
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
 }
 
@@ -366,7 +367,7 @@ body {
   overflow: hidden;
   color: rgba(200, 212, 222, 0.65);
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.1;
   text-overflow: ellipsis;
   text-shadow:
@@ -381,7 +382,7 @@ body {
   margin-top: 14px;
   color: var(--text);
   font-size: 21px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.2;
   text-shadow:
     0 1px 0 rgba(0, 0, 0, 0.56),
@@ -438,7 +439,7 @@ body {
   margin-top: 18px;
   color: var(--text);
   font-size: 21px;
-  font-weight: 650;
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.48);
 }
@@ -454,7 +455,7 @@ body {
   gap: 18px;
   color: var(--soft);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   text-transform: uppercase;
 }
@@ -484,7 +485,7 @@ body {
   background: rgba(5, 11, 16, 0.20);
   color: var(--muted);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .compact-list li.current {
@@ -584,7 +585,7 @@ body {
   overflow: hidden;
   color: var(--text);
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.12;
   text-overflow: ellipsis;
   text-shadow:
@@ -599,7 +600,7 @@ body {
   margin-top: 8px;
   color: var(--muted);
   font-size: 19px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -621,7 +622,7 @@ body {
   padding: 10px 28px;
   color: var(--soft);
   font-size: 19px;
-  font-weight: 500;
+  font-weight: 450;
 }
 
 .info-dot {
@@ -668,7 +669,8 @@ body {
 }
 
 .mode-minimized {
-  width: min(520px, calc(100vw - 16px));
+  width: min(450px, calc(100vw - 16px));
+  max-width: 450px;
 }
 
 .mode-minimized .window-bar {
@@ -677,7 +679,7 @@ body {
 }
 
 .mode-minimized .window-bar h1 {
-  font-size: 21px;
+  font-size: 20px;
 }
 
 .mode-minimized .window-actions {
@@ -743,7 +745,7 @@ body {
 }
 
 .mode-minimized .track-title {
-  font-size: 23px;
+  font-size: 21px;
 }
 
 .mode-minimized .note-mark {
@@ -789,9 +791,22 @@ body {
 }
 
 .mode-minimized .playlist-panel {
-  display: none;
-  margin: -2px 12px 12px;
-  padding: 8px 10px 10px;
+  display: block;
+  max-height: 0;
+  margin: -2px 12px 0;
+  padding: 0 10px;
+  overflow: hidden;
+  border-width: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-10px);
+  transition:
+    max-height 360ms ease,
+    margin 360ms ease,
+    padding 360ms ease,
+    border-width 360ms ease,
+    opacity 220ms ease,
+    transform 360ms ease;
 }
 
 .mode-minimized .playlist-head {
@@ -811,7 +826,13 @@ body {
 }
 
 .mode-minimized.playlist-reveal .playlist-panel:not(.hidden) {
-  display: block;
+  max-height: 230px;
+  margin: -2px 12px 12px;
+  padding: 8px 10px 10px;
+  border-width: 2px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .mode-minimized .expanded-list {
@@ -819,46 +840,93 @@ body {
 }
 
 .mode-maximized {
-  width: min(570px, calc(100vw - 16px));
+  width: min(450px, calc(100vw - 16px));
+  max-width: 450px;
   align-self: flex-start;
   margin-top: 8px;
 }
 
 .mode-maximized .window-bar {
-  min-height: 92px;
-  padding: 33px 36px 18px;
+  min-height: 58px;
+  padding: 17px 24px 10px;
 }
 
 .mode-maximized .window-bar h1 {
-  font-size: 26px;
+  font-size: 22px;
 }
 
 .mode-maximized .now-panel {
-  margin: 0 18px 18px;
+  margin: 0 12px 12px;
 }
 
 .mode-maximized .panel-surface {
-  padding: 20px 22px 26px;
+  padding: 14px 16px 17px;
+}
+
+.mode-maximized .panel-top {
+  min-height: 32px;
+}
+
+.mode-maximized .now-pill {
+  min-height: 30px;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.mode-maximized .now-pill svg {
+  width: 19px;
+  height: 19px;
+}
+
+.mode-maximized .sound-mark {
+  gap: 8px;
+}
+
+.mode-maximized .speaker {
+  width: 24px;
+  height: 24px;
+}
+
+.mode-maximized .bars {
+  gap: 4px;
+  height: 28px;
+}
+
+.mode-maximized .bars span {
+  width: 6px;
+}
+
+.mode-maximized .bars span:nth-child(1) {
+  height: 13px;
+}
+
+.mode-maximized .bars span:nth-child(2) {
+  height: 20px;
+}
+
+.mode-maximized .bars span:nth-child(3) {
+  height: 26px;
 }
 
 .mode-maximized .track-grid {
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 54px minmax(0, 1fr);
   grid-template-areas:
     "note title"
     "meta meta";
-  gap: 18px;
-  margin-top: 40px;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .mode-maximized .note-mark {
   grid-area: note;
-  width: 70px;
-  height: 70px;
+  width: 52px;
+  height: 52px;
 }
 
 .mode-maximized .note-mark svg {
-  width: 62px;
-  height: 62px;
+  width: 48px;
+  height: 48px;
 }
 
 .mode-maximized .track-copy {
@@ -866,49 +934,158 @@ body {
 }
 
 .mode-maximized .track-title {
-  font-size: 32px;
+  display: -webkit-box;
+  font-size: 24px;
+  line-height: 1.14;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mode-maximized .track-artist {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
   white-space: normal;
 }
 
-.mode-maximized .track-artist,
 .mode-maximized .compact-time {
   display: none;
 }
 
 .mode-maximized .meta-grid {
   grid-area: meta;
-  grid-template-columns: 140px 2px minmax(0, 1fr);
-  gap: 18px;
-  margin-left: 104px;
-  margin-top: 11px;
+  grid-template-columns: minmax(0, 0.85fr) 1px minmax(0, 1.15fr);
+  gap: 10px;
+  margin-left: 0;
+  margin-top: 4px;
 }
 
 .mode-maximized .meta-separator {
-  min-height: 84px;
+  width: 1px;
+  min-height: 52px;
 }
 
 .mode-maximized .meta-label {
-  font-size: 20px;
-  text-align: right;
+  font-size: 13px;
+  text-align: left;
 }
 
 .mode-maximized .meta-value {
-  font-size: 22px;
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.18;
 }
 
 .mode-maximized .progress-block {
-  margin-top: 34px;
+  margin-top: 18px;
+}
+
+.mode-maximized .progress-track {
+  height: 8px;
+}
+
+.mode-maximized .progress-thumb {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+.mode-maximized .time-row {
+  margin-top: 11px;
+  font-size: 14px;
 }
 
 .mode-maximized .playlist-panel:not(.hidden) {
   display: block;
-  margin: 0 18px 18px;
+  margin: 0 12px 12px;
   padding: 0;
 }
 
 .mode-maximized .playlist-head,
 .mode-maximized .compact-list {
   display: none;
+}
+
+.mode-maximized .expanded-list {
+  gap: 10px;
+}
+
+.mode-maximized .song-card {
+  border-radius: 8px;
+}
+
+.mode-maximized .song-label {
+  min-height: 28px;
+  gap: 8px;
+  margin: 8px 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.mode-maximized .song-label svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mode-maximized .song-row,
+.mode-maximized .next-list li {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 50px;
+  padding: 9px 12px 11px;
+}
+
+.mode-maximized .song-row svg {
+  width: 30px;
+  height: 30px;
+}
+
+.mode-maximized .list-note {
+  width: 28px;
+  height: 28px;
+}
+
+.mode-maximized .list-note::before {
+  left: 12px;
+  top: 3px;
+  width: 3px;
+  height: 18px;
+}
+
+.mode-maximized .list-note::after {
+  left: 3px;
+  bottom: 3px;
+  width: 16px;
+  height: 11px;
+}
+
+.mode-maximized .song-title {
+  font-size: 15px;
+  line-height: 1.12;
+}
+
+.mode-maximized .song-artist {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.mode-maximized .next-list li + li {
+  border-top-color: rgba(255, 255, 255, 0.07);
+}
+
+.mode-maximized .status-footer {
+  min-height: 40px;
+  margin: 0 12px 12px;
+  padding: 8px 14px;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.mode-maximized .info-dot {
+  width: 22px;
+  height: 22px;
+  font-size: 16px;
 }
 
 .mode-minimized .panel-top {
@@ -938,8 +1115,8 @@ body {
   }
 
   .mode-minimized .track-grid {
-    grid-template-columns: 64px minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 10px 14px;
   }
 
   .mode-minimized .meta-grid {
@@ -960,12 +1137,24 @@ body {
   .track-title,
   .mode-minimized .track-title,
   .mode-maximized .track-title {
-    font-size: 24px;
+    font-size: 23px;
+  }
+
+  .mode-minimized .track-title {
+    font-size: 21px;
   }
 
   .meta-label,
   .meta-value {
-    font-size: 16px;
+    font-size: 15px;
+  }
+
+  .mode-maximized .meta-label {
+    font-size: 13px;
+  }
+
+  .mode-maximized .meta-value {
+    font-size: 15px;
   }
 
   .compact-list li {

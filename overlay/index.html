@@ -138,6 +138,7 @@
       mode: 'minimized',
       upcomingTracks: 3,
       compactRevealMs: 3000,
+      maximizedQueueMode: 'multiple',
       pollIntervalMs: 200,
       idleAfterMs: 4500,
     };
@@ -147,6 +148,7 @@
       mode: DEFAULTS.mode,
       upcomingTracks: DEFAULTS.upcomingTracks,
       compactRevealMs: DEFAULTS.compactRevealMs,
+      maximizedQueueMode: DEFAULTS.maximizedQueueMode,
       currentData: null,
       lastPollTime: 0,
       lastPosition: 0,
@@ -155,6 +157,7 @@
       lastTrackKey: '',
       idleTimer: null,
       revealTimer: null,
+      revealDeadline: 0,
     };
 
     const els = {
@@ -225,6 +228,12 @@
         : 'minimized';
     }
 
+    function normalizeMaximizedQueueMode(value) {
+      return String(value || '').toLowerCase() === 'single'
+        ? 'single'
+        : 'multiple';
+    }
+
     function applyOverlaySettings(settings) {
       state.mode = normalizeMode(settings.mode || state.mode);
       state.upcomingTracks = clampNumber(
@@ -239,9 +248,14 @@
         10000,
         DEFAULTS.compactRevealMs
       );
+      state.maximizedQueueMode = normalizeMaximizedQueueMode(
+        settings.maximizedQueueMode || state.maximizedQueueMode
+      );
 
       els.card.classList.toggle('mode-maximized', state.mode === 'maximized');
       els.card.classList.toggle('mode-minimized', state.mode !== 'maximized');
+      els.card.classList.toggle('queue-single', state.maximizedQueueMode === 'single');
+      els.card.classList.toggle('queue-multiple', state.maximizedQueueMode !== 'single');
       els.modeAction.classList.toggle('minus', state.mode === 'maximized');
       els.modeAction.classList.toggle('plus', state.mode !== 'maximized');
     }
@@ -356,6 +370,7 @@
         mode: DEFAULTS.mode,
         upcomingTracks: DEFAULTS.upcomingTracks,
         compactRevealMs: DEFAULTS.compactRevealMs,
+        maximizedQueueMode: DEFAULTS.maximizedQueueMode,
       };
 
       try {
@@ -376,6 +391,9 @@
             0,
             10000,
             settings.compactRevealMs
+          );
+          settings.maximizedQueueMode = normalizeMaximizedQueueMode(
+            config.maximizedQueueMode || config.maximized_queue
           );
         }
       } catch (error) {}
@@ -405,6 +423,11 @@
           0,
           10000,
           settings.compactRevealMs
+        );
+      }
+      if (params.has('maximized_queue')) {
+        settings.maximizedQueueMode = normalizeMaximizedQueueMode(
+          params.get('maximized_queue')
         );
       }
 
@@ -464,6 +487,9 @@
     }
 
     function setWaiting(message) {
+      clearTimeout(state.revealTimer);
+      state.revealTimer = null;
+      state.revealDeadline = 0;
       els.card.classList.remove('playing', 'paused', 'playlist-reveal');
       els.card.classList.add('waiting');
       els.title.textContent = 'Waiting for Windows Media Player';
@@ -493,12 +519,31 @@
     function triggerCompactReveal() {
       if (state.mode !== 'minimized' || state.compactRevealMs <= 0) return;
 
-      clearTimeout(state.revealTimer);
+      state.revealDeadline = Date.now() + state.compactRevealMs;
       els.card.classList.add('playlist-reveal');
-      state.revealTimer = setTimeout(() => {
+      scheduleCompactRevealClose();
+    }
+
+    function scheduleCompactRevealClose() {
+      clearTimeout(state.revealTimer);
+      const remaining = state.revealDeadline - Date.now();
+
+      if (remaining <= 0) {
         els.card.classList.remove('playlist-reveal');
         state.revealTimer = null;
-      }, state.compactRevealMs);
+        state.revealDeadline = 0;
+        return;
+      }
+
+      state.revealTimer = setTimeout(() => {
+        if (Date.now() < state.revealDeadline - 16) {
+          scheduleCompactRevealClose();
+          return;
+        }
+        els.card.classList.remove('playlist-reveal');
+        state.revealTimer = null;
+        state.revealDeadline = 0;
+      }, remaining);
     }
 
     function buildCompactItems(items, position) {
@@ -566,6 +611,12 @@
       }));
     }
 
+    function maxNextItems() {
+      return state.mode === 'maximized' && state.maximizedQueueMode === 'single'
+        ? 1
+        : state.upcomingTracks;
+    }
+
     function updatePlaylist(data, trackChanged) {
       const items = Array.isArray(data.playlist) ? data.playlist : [];
       if (!items.length) {
@@ -580,9 +631,10 @@
       const currentIndex = currentIndexFromData(data);
       const position = playlistPosition(items, currentIndex);
       const previous = position > 0 ? items[position - 1] : null;
+      const nextCount = maxNextItems();
       const nextItems = position >= 0
-        ? items.slice(position + 1, position + 1 + state.upcomingTracks)
-        : items.slice(0, state.upcomingTracks);
+        ? items.slice(position + 1, position + 1 + nextCount)
+        : items.slice(0, nextCount);
 
       els.playlistPanel.classList.remove('hidden');
       els.playlistCount.textContent = `${items.length} ${items.length === 1 ? 'track' : 'tracks'}`;

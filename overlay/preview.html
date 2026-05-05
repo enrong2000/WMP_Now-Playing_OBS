@@ -29,7 +29,7 @@
       border-radius: 6px;
       background: rgba(20, 31, 41, 0.92);
       color: #f7fbff;
-      font: 800 12px "Segoe UI", Arial, sans-serif;
+      font: 700 12px "Segoe UI", Arial, sans-serif;
       cursor: pointer;
     }
 
@@ -43,6 +43,7 @@
     <button onclick="setMode('minimized')">Minimized</button>
     <button onclick="setMode('maximized')">Maximized</button>
     <button onclick="nextTrack()">Next</button>
+    <button onclick="toggleMaximizedQueue()">Queue Mode</button>
     <button onclick="toggleLongTitle()">Long Title</button>
     <button onclick="togglePlaylist()">Playlist</button>
     <button onclick="setWaiting()">Waiting</button>
@@ -179,9 +180,14 @@
     const params = new URLSearchParams(window.location.search);
     let current = 1;
     let mode = params.get('mode') === 'maximized' ? 'maximized' : 'minimized';
+    let maximizedQueueMode = params.get('maximized_queue') === 'single'
+      ? 'single'
+      : 'multiple';
     let longTitle = params.get('long') === '1';
     let withPlaylist = params.get('playlist') !== '0';
     let waiting = params.get('waiting') === '1';
+    let revealTimer = null;
+    let revealDeadline = 0;
 
     if (params.get('clean') === '1') {
       document.body.classList.add('clean-preview');
@@ -255,7 +261,10 @@
         els.previousCard.classList.add('hidden');
       }
 
-      const next = tracks.slice(current + 1, current + 4);
+      const nextCount = mode === 'maximized' && maximizedQueueMode === 'single'
+        ? 1
+        : 3;
+      const next = tracks.slice(current + 1, current + 1 + nextCount);
       if (next.length) {
         els.nextCard.classList.remove('hidden');
         els.nextList.replaceChildren(...next.map((track) => {
@@ -273,10 +282,15 @@
     function render() {
       els.card.classList.toggle('mode-maximized', mode === 'maximized');
       els.card.classList.toggle('mode-minimized', mode !== 'maximized');
+      els.card.classList.toggle('queue-single', maximizedQueueMode === 'single');
+      els.card.classList.toggle('queue-multiple', maximizedQueueMode !== 'single');
       els.modeAction.classList.toggle('minus', mode === 'maximized');
       els.modeAction.classList.toggle('plus', mode !== 'maximized');
 
       if (waiting) {
+        clearTimeout(revealTimer);
+        revealTimer = null;
+        revealDeadline = 0;
         els.card.classList.add('waiting');
         els.card.classList.remove('playing', 'paused', 'playlist-reveal');
         els.title.textContent = 'Waiting for Windows Media Player';
@@ -307,6 +321,27 @@
       render();
     }
 
+    function scheduleRevealClose() {
+      clearTimeout(revealTimer);
+      const remaining = revealDeadline - Date.now();
+      if (remaining <= 0) {
+        els.card.classList.remove('playlist-reveal');
+        revealTimer = null;
+        revealDeadline = 0;
+        return;
+      }
+
+      revealTimer = setTimeout(() => {
+        if (Date.now() < revealDeadline - 16) {
+          scheduleRevealClose();
+          return;
+        }
+        els.card.classList.remove('playlist-reveal');
+        revealTimer = null;
+        revealDeadline = 0;
+      }, remaining);
+    }
+
     function nextTrack() {
       waiting = false;
       current = (current + 1) % tracks.length;
@@ -314,7 +349,14 @@
       void els.card.offsetWidth;
       els.card.classList.add('track-change', 'playlist-reveal');
       render();
-      setTimeout(() => els.card.classList.remove('playlist-reveal'), 3000);
+      revealDeadline = Date.now() + 3000;
+      scheduleRevealClose();
+    }
+
+    function toggleMaximizedQueue() {
+      waiting = false;
+      maximizedQueueMode = maximizedQueueMode === 'single' ? 'multiple' : 'single';
+      render();
     }
 
     function toggleLongTitle() {
