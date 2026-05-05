@@ -31,10 +31,10 @@ constexpr int kDisplayModeEmbeddedOverlay = 2;
 constexpr int kOverlayModeMinimized = 0;
 constexpr int kOverlayModeMaximized = 1;
 constexpr int kMinOverlayWidth = 200;
-constexpr int kMaxOverlayWidth = 450;
+constexpr int kMaxOverlayWidth = 300;
 constexpr int kDefaultOverlayWidth = kMaxOverlayWidth;
-constexpr int kDefaultOverlayHeight = 520;
-constexpr int kMaximizedOverlayRecommendedHeight = 720;
+constexpr int kDefaultOverlayHeight = 350;
+constexpr int kMaximizedOverlayRecommendedHeight = 480;
 constexpr int kMaximizedQueueSingle = 0;
 constexpr int kMaximizedQueueMultiple = 1;
 
@@ -73,7 +73,7 @@ struct SourceContext {
 	int overlay_height = kDefaultOverlayHeight;
 	int upcoming_tracks = 3;
 	int compact_playlist_reveal_ms = 3000;
-	int maximized_queue_mode = kMaximizedQueueMultiple;
+	int maximized_queue_mode = kMaximizedQueueSingle;
 	float update_elapsed = 0.0f;
 	std::string last_text;
 	std::string json_output_path;
@@ -756,7 +756,7 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "upcoming_tracks", 3);
 	obs_data_set_default_int(settings, "compact_playlist_reveal_ms", 3000);
 	obs_data_set_default_int(settings, "maximized_queue_mode",
-				 kMaximizedQueueMultiple);
+				 kMaximizedQueueSingle);
 	obs_data_set_default_bool(settings, "show_composer", true);
 	obs_data_set_default_bool(settings, "show_full_playlist", true);
 	obs_data_set_default_string(settings, "json_output_path",

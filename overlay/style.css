@@ -12,7 +12,7 @@
   --text: #cdd3d8;
   --muted: rgba(200, 210, 218, 0.65);
   --soft: rgba(190, 200, 210, 0.52);
-  --title: #d4cc6a;
+  --title: #d7ef3d;
   --accent: #a8c44a;
   --accent-soft: #d6e2a8;
   --blue: #a0c4de;
@@ -44,12 +44,12 @@ body {
 
 .player-window {
   position: relative;
-  width: min(450px, calc(100vw - 16px));
-  max-width: 450px;
-  margin-top: 8px;
+  width: min(300px, calc(100vw - 4px));
+  max-width: 300px;
+  margin-top: 4px;
   overflow: hidden;
-  border: 2px solid rgba(215, 232, 245, 0.55);
-  border-radius: 22px;
+  border: 1px solid rgba(215, 232, 245, 0.55);
+  border-radius: 15px;
   background:
     linear-gradient(180deg, rgba(234, 247, 255, 0.16), transparent 4px),
     radial-gradient(90% 70% at 50% -18%, rgba(185, 213, 234, 0.22), transparent 52%),
@@ -64,17 +64,17 @@ body {
 .player-window::before {
   content: "";
   position: absolute;
-  inset: 3px;
+  inset: 2px;
   pointer-events: none;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 18px;
+  border-radius: 12px;
 }
 
 .player-window::after {
   content: "";
   position: absolute;
-  inset: 2px 20px auto;
-  height: 2px;
+  inset: 1px 13px auto;
+  height: 1px;
   pointer-events: none;
   border-radius: 999px;
   background: linear-gradient(90deg, transparent, rgba(238, 249, 255, 0.55), transparent);
@@ -98,8 +98,8 @@ body {
   font-weight: 700;
   line-height: 1;
   text-shadow:
-    0 1px 0 rgba(1, 9, 14, 0.72),
-    0 0 4px rgba(212, 204, 106, 0.18);
+    0 1px 0 rgba(1, 9, 14, 0.8),
+    0 0 4px rgba(215, 239, 61, 0.26);
   text-transform: uppercase;
 }
 
@@ -669,63 +669,63 @@ body {
 }
 
 .mode-minimized {
-  width: min(450px, calc(100vw - 16px));
-  max-width: 450px;
+  width: min(300px, calc(100vw - 4px));
+  max-width: 300px;
 }
 
 .mode-minimized .window-bar {
-  min-height: 50px;
-  padding: 15px 22px 8px;
+  min-height: 34px;
+  padding: 10px 15px 5px;
 }
 
 .mode-minimized .window-bar h1 {
-  font-size: 20px;
+  font-size: 14px;
 }
 
 .mode-minimized .window-actions {
-  gap: 12px;
+  gap: 8px;
 }
 
 .mode-minimized .window-divider {
-  height: 24px;
+  height: 16px;
 }
 
 .mode-minimized .window-icon {
-  width: 24px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
 }
 
 .mode-minimized .window-icon::before,
 .mode-minimized .window-icon.close::after {
-  inset: 11px 2px auto;
+  inset: 7px 1px auto;
   height: 2px;
 }
 
 .mode-minimized .window-icon.plus::after {
-  inset: 2px auto auto 11px;
+  inset: 1px auto auto 7px;
   width: 2px;
-  height: 20px;
+  height: 14px;
 }
 
 .mode-minimized .now-panel {
-  margin: 0 12px 12px;
+  margin: 0 8px 8px;
 }
 
 .mode-minimized .panel-surface {
-  min-height: 134px;
-  padding: 13px 15px 15px;
+  min-height: 90px;
+  padding: 9px 10px 10px;
 }
 
 .mode-minimized .now-pill {
-  min-height: 30px;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 14px;
+  min-height: 22px;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
 }
 
 .mode-minimized .now-pill svg {
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
 }
 
 .mode-minimized .progress-block,
@@ -736,27 +736,27 @@ body {
 }
 
 .mode-minimized .track-grid {
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 39px minmax(0, 1fr);
   grid-template-areas:
     "note title"
     "meta meta";
-  gap: 9px 14px;
-  margin-top: 9px;
+  gap: 6px 9px;
+  margin-top: 7px;
 }
 
 .mode-minimized .track-title {
-  font-size: 21px;
+  font-size: 15px;
 }
 
 .mode-minimized .note-mark {
   grid-area: note;
-  width: 58px;
-  height: 58px;
+  width: 39px;
+  height: 39px;
 }
 
 .mode-minimized .note-mark svg {
-  width: 54px;
-  height: 54px;
+  width: 36px;
+  height: 36px;
 }
 
 .mode-minimized .track-copy {
@@ -764,37 +764,37 @@ body {
 }
 
 .mode-minimized .compact-time {
-  margin-top: 5px;
-  font-size: 16px;
+  margin-top: 3px;
+  font-size: 11px;
 }
 
 .mode-minimized .meta-grid {
   grid-area: meta;
-  grid-template-columns: minmax(126px, 0.42fr) 1px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(76px, 0.42fr) 1px minmax(0, 1fr);
+  gap: 8px;
   margin-top: 1px;
 }
 
 .mode-minimized .meta-separator {
   width: 1px;
-  min-height: 45px;
+  min-height: 30px;
 }
 
 .mode-minimized .meta-label {
-  font-size: 14px;
+  font-size: 10px;
 }
 
 .mode-minimized .meta-value {
-  margin-top: 6px;
-  font-size: 16px;
-  line-height: 1.18;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.14;
 }
 
 .mode-minimized .playlist-panel {
   display: block;
   max-height: 0;
-  margin: -2px 12px 0;
-  padding: 0 10px;
+  margin: -1px 8px 0;
+  padding: 0 7px;
   overflow: hidden;
   border-width: 0;
   opacity: 0;
@@ -810,26 +810,26 @@ body {
 }
 
 .mode-minimized .playlist-head {
-  font-size: 11px;
+  font-size: 9px;
 }
 
 .mode-minimized .compact-list {
-  gap: 5px;
-  margin-top: 8px;
+  gap: 3px;
+  margin-top: 5px;
 }
 
 .mode-minimized .compact-list li {
-  grid-template-columns: 26px minmax(0, 1fr) minmax(72px, 0.34fr);
-  min-height: 26px;
-  padding: 5px 8px;
-  font-size: 12px;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(48px, 0.34fr);
+  min-height: 20px;
+  padding: 3px 5px;
+  font-size: 10px;
 }
 
 .mode-minimized.playlist-reveal .playlist-panel:not(.hidden) {
-  max-height: 230px;
-  margin: -2px 12px 12px;
-  padding: 8px 10px 10px;
-  border-width: 2px;
+  max-height: 154px;
+  margin: -1px 8px 8px;
+  padding: 5px 7px 7px;
+  border-width: 1px;
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
@@ -840,93 +840,104 @@ body {
 }
 
 .mode-maximized {
-  width: min(450px, calc(100vw - 16px));
-  max-width: 450px;
+  width: min(300px, calc(100vw - 4px));
+  max-width: 300px;
   align-self: flex-start;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .mode-maximized .window-bar {
-  min-height: 58px;
-  padding: 17px 24px 10px;
+  min-height: 39px;
+  padding: 11px 16px 7px;
 }
 
 .mode-maximized .window-bar h1 {
-  font-size: 22px;
+  font-size: 15px;
 }
 
 .mode-maximized .now-panel {
-  margin: 0 12px 12px;
+  margin: 0 8px 8px;
+  padding: 5px;
 }
 
 .mode-maximized .panel-surface {
-  padding: 14px 16px 17px;
+  min-height: 0;
+  padding: 9px 11px 11px;
+  border: 1px solid rgba(217, 232, 244, 0.26);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 12px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 48%),
+    rgba(20, 34, 46, 0.32);
+  box-shadow:
+    inset 0 0 0 1px rgba(6, 12, 17, 0.34),
+    inset 0 12px 20px rgba(255, 255, 255, 0.025);
 }
 
 .mode-maximized .panel-top {
-  min-height: 32px;
+  min-height: 22px;
 }
 
 .mode-maximized .now-pill {
-  min-height: 30px;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 13px;
+  min-height: 22px;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 10px;
 }
 
 .mode-maximized .now-pill svg {
-  width: 19px;
-  height: 19px;
-}
-
-.mode-maximized .sound-mark {
-  gap: 8px;
-}
-
-.mode-maximized .speaker {
-  width: 24px;
-  height: 24px;
-}
-
-.mode-maximized .bars {
-  gap: 4px;
-  height: 28px;
-}
-
-.mode-maximized .bars span {
-  width: 6px;
-}
-
-.mode-maximized .bars span:nth-child(1) {
+  width: 13px;
   height: 13px;
 }
 
+.mode-maximized .sound-mark {
+  gap: 5px;
+}
+
+.mode-maximized .speaker {
+  width: 16px;
+  height: 16px;
+}
+
+.mode-maximized .bars {
+  gap: 3px;
+  height: 19px;
+}
+
+.mode-maximized .bars span {
+  width: 4px;
+}
+
+.mode-maximized .bars span:nth-child(1) {
+  height: 9px;
+}
+
 .mode-maximized .bars span:nth-child(2) {
-  height: 20px;
+  height: 13px;
 }
 
 .mode-maximized .bars span:nth-child(3) {
-  height: 26px;
+  height: 18px;
 }
 
 .mode-maximized .track-grid {
-  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
   grid-template-areas:
     "note title"
     "meta meta";
-  gap: 12px;
-  margin-top: 16px;
+  gap: 8px 10px;
+  margin-top: 13px;
 }
 
 .mode-maximized .note-mark {
   grid-area: note;
-  width: 52px;
-  height: 52px;
+  width: 35px;
+  height: 35px;
 }
 
 .mode-maximized .note-mark svg {
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
 }
 
 .mode-maximized .track-copy {
@@ -935,7 +946,7 @@ body {
 
 .mode-maximized .track-title {
   display: -webkit-box;
-  font-size: 24px;
+  font-size: 17px;
   line-height: 1.14;
   white-space: normal;
   -webkit-box-orient: vertical;
@@ -943,10 +954,7 @@ body {
 }
 
 .mode-maximized .track-artist {
-  display: block;
-  margin-top: 6px;
-  font-size: 13px;
-  white-space: normal;
+  display: none;
 }
 
 .mode-maximized .compact-time {
@@ -955,51 +963,77 @@ body {
 
 .mode-maximized .meta-grid {
   grid-area: meta;
-  grid-template-columns: minmax(0, 0.85fr) 1px minmax(0, 1.15fr);
-  gap: 10px;
-  margin-left: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  margin-left: 46px;
   margin-top: 4px;
 }
 
-.mode-maximized .meta-separator {
+.mode-maximized .meta-item {
+  display: grid;
+  grid-template-columns: 58px 1px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.mode-maximized .meta-item::before {
+  content: "";
+  grid-column: 2;
+  grid-row: 1;
   width: 1px;
-  min-height: 52px;
+  min-height: 16px;
+  background: rgba(223, 235, 244, 0.32);
+}
+
+.mode-maximized .meta-separator {
+  display: none;
 }
 
 .mode-maximized .meta-label {
-  font-size: 13px;
-  text-align: left;
+  grid-column: 1;
+  font-size: 10px;
+  line-height: 1.12;
+  text-align: right;
 }
 
 .mode-maximized .meta-value {
-  margin-top: 6px;
-  font-size: 15px;
+  grid-column: 3;
+  margin-top: 0;
+  font-size: 12px;
   line-height: 1.18;
 }
 
 .mode-maximized .progress-block {
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .mode-maximized .progress-track {
-  height: 8px;
+  height: 5px;
 }
 
 .mode-maximized .progress-thumb {
-  width: 18px;
-  height: 18px;
+  width: 12px;
+  height: 12px;
   border-width: 2px;
 }
 
 .mode-maximized .time-row {
-  margin-top: 11px;
-  font-size: 14px;
+  margin-top: 7px;
+  font-size: 10px;
 }
 
 .mode-maximized .playlist-panel:not(.hidden) {
   display: block;
-  margin: 0 12px 12px;
+  margin: 0 8px 8px;
   padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mode-maximized .playlist-panel::before {
+  display: none;
 }
 
 .mode-maximized .playlist-head,
@@ -1008,66 +1042,78 @@ body {
 }
 
 .mode-maximized .expanded-list {
-  gap: 10px;
+  gap: 8px;
 }
 
 .mode-maximized .song-card {
-  border-radius: 8px;
+  border-width: 1px;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(238, 249, 255, 0.18), transparent 12px),
+    linear-gradient(180deg, rgba(86, 108, 125, 0.52), rgba(27, 42, 55, 0.76));
+  box-shadow:
+    inset 0 0 0 1px rgba(5, 10, 14, 0.38),
+    0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .mode-maximized .song-label {
-  min-height: 28px;
-  gap: 8px;
-  margin: 8px 10px;
-  padding: 6px 10px;
-  font-size: 12px;
+  min-height: 20px;
+  gap: 5px;
+  margin: 7px 7px 6px;
+  padding: 4px 7px;
+  font-size: 9px;
+  color: #b9d7ef;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 42%),
+    linear-gradient(180deg, rgba(28, 45, 60, 0.98), rgba(28, 44, 58, 0.82));
 }
 
 .mode-maximized .song-label svg {
-  width: 16px;
-  height: 16px;
+  width: 11px;
+  height: 11px;
 }
 
 .mode-maximized .song-row,
 .mode-maximized .next-list li {
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 10px;
-  min-height: 50px;
-  padding: 9px 12px 11px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  min-height: 39px;
+  padding: 7px 10px 9px;
+  background: rgba(10, 22, 32, 0.12);
 }
 
 .mode-maximized .song-row svg {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
 }
 
 .mode-maximized .list-note {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 
 .mode-maximized .list-note::before {
-  left: 12px;
+  left: 11px;
   top: 3px;
   width: 3px;
-  height: 18px;
+  height: 15px;
 }
 
 .mode-maximized .list-note::after {
   left: 3px;
   bottom: 3px;
-  width: 16px;
-  height: 11px;
+  width: 13px;
+  height: 9px;
 }
 
 .mode-maximized .song-title {
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.12;
 }
 
 .mode-maximized .song-artist {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: 3px;
+  font-size: 11px;
 }
 
 .mode-maximized .next-list li + li {
@@ -1075,17 +1121,17 @@ body {
 }
 
 .mode-maximized .status-footer {
-  min-height: 40px;
-  margin: 0 12px 12px;
-  padding: 8px 14px;
-  gap: 10px;
-  font-size: 13px;
+  min-height: 28px;
+  margin: 0 8px 8px;
+  padding: 5px 9px;
+  gap: 7px;
+  font-size: 10px;
 }
 
 .mode-maximized .info-dot {
-  width: 22px;
-  height: 22px;
-  font-size: 16px;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
 }
 
 .mode-minimized .panel-top {
@@ -1094,67 +1140,71 @@ body {
 
 @media (max-width: 760px) {
   body {
-    padding: 8px;
+    padding: 0;
   }
 
   .window-bar {
-    padding-left: 20px;
-    padding-right: 20px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
   .window-bar h1 {
-    font-size: 21px;
+    font-size: 15px;
   }
 
   .window-actions {
-    gap: 12px;
+    gap: 8px;
   }
 
   .mode-minimized .panel-surface {
-    padding: 14px 18px 16px;
+    padding: 9px 10px 10px;
   }
 
   .mode-minimized .track-grid {
-    grid-template-columns: 58px minmax(0, 1fr);
-    gap: 10px 14px;
+    grid-template-columns: 39px minmax(0, 1fr);
+    gap: 6px 9px;
   }
 
   .mode-minimized .meta-grid {
     grid-column: 1 / -1;
-    grid-template-columns: minmax(80px, 0.4fr) 2px minmax(120px, 1fr);
+    grid-template-columns: minmax(76px, 0.42fr) 1px minmax(0, 1fr);
   }
 
   .note-mark {
-    width: 58px;
-    height: 58px;
+    width: 39px;
+    height: 39px;
   }
 
   .note-mark svg {
-    width: 54px;
-    height: 54px;
+    width: 36px;
+    height: 36px;
   }
 
   .track-title,
   .mode-minimized .track-title,
   .mode-maximized .track-title {
-    font-size: 23px;
+    font-size: 16px;
   }
 
   .mode-minimized .track-title {
-    font-size: 21px;
+    font-size: 15px;
+  }
+
+  .mode-maximized .track-title {
+    font-size: 17px;
   }
 
   .meta-label,
   .meta-value {
-    font-size: 15px;
+    font-size: 11px;
   }
 
   .mode-maximized .meta-label {
-    font-size: 13px;
+    font-size: 10px;
   }
 
   .mode-maximized .meta-value {
-    font-size: 15px;
+    font-size: 12px;
   }
 
   .compact-list li {

@@ -138,7 +138,7 @@
       mode: 'minimized',
       upcomingTracks: 3,
       compactRevealMs: 3000,
-      maximizedQueueMode: 'multiple',
+      maximizedQueueMode: 'single',
       pollIntervalMs: 200,
       idleAfterMs: 4500,
     };
@@ -228,10 +228,11 @@
         : 'minimized';
     }
 
-    function normalizeMaximizedQueueMode(value) {
-      return String(value || '').toLowerCase() === 'single'
-        ? 'single'
-        : 'multiple';
+    function normalizeMaximizedQueueMode(value, fallback = DEFAULTS.maximizedQueueMode) {
+      const normalized = String(value || '').toLowerCase();
+      if (normalized === 'multiple') return 'multiple';
+      if (normalized === 'single') return 'single';
+      return fallback;
     }
 
     function applyOverlaySettings(settings) {
@@ -393,7 +394,8 @@
             settings.compactRevealMs
           );
           settings.maximizedQueueMode = normalizeMaximizedQueueMode(
-            config.maximizedQueueMode || config.maximized_queue
+            config.maximizedQueueMode || config.maximized_queue,
+            settings.maximizedQueueMode
           );
         }
       } catch (error) {}

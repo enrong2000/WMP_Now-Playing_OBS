@@ -180,9 +180,9 @@
     const params = new URLSearchParams(window.location.search);
     let current = 1;
     let mode = params.get('mode') === 'maximized' ? 'maximized' : 'minimized';
-    let maximizedQueueMode = params.get('maximized_queue') === 'single'
-      ? 'single'
-      : 'multiple';
+    let maximizedQueueMode = params.get('maximized_queue') === 'multiple'
+      ? 'multiple'
+      : 'single';
     let longTitle = params.get('long') === '1';
     let withPlaylist = params.get('playlist') !== '0';
     let waiting = params.get('waiting') === '1';
