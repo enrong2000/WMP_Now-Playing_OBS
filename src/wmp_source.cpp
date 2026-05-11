@@ -37,6 +37,8 @@ constexpr int kDefaultOverlayHeight = 350;
 constexpr int kMaximizedOverlayRecommendedHeight = 480;
 constexpr int kMaximizedQueueSingle = 0;
 constexpr int kMaximizedQueueMultiple = 1;
+constexpr int kOverlayThemeMapleStoryLike = 0;
+constexpr int kOverlayThemeModern = 1;
 
 std::string default_json_path()
 {
@@ -74,6 +76,7 @@ struct SourceContext {
 	int upcoming_tracks = 3;
 	int compact_playlist_reveal_ms = 3000;
 	int maximized_queue_mode = kMaximizedQueueSingle;
+	int overlay_theme = kOverlayThemeMapleStoryLike;
 	float update_elapsed = 0.0f;
 	std::string last_text;
 	std::string json_output_path;
@@ -173,6 +176,11 @@ std::string maximized_queue_query_value(int mode)
 	return mode == kMaximizedQueueSingle ? "single" : "multiple";
 }
 
+std::string overlay_theme_query_value(int theme)
+{
+	return theme == kOverlayThemeModern ? "modern" : "maplestory";
+}
+
 std::string build_overlay_url(const std::string &local_html,
 			      const SourceContext &context)
 {
@@ -189,6 +197,8 @@ std::string build_overlay_url(const std::string &local_html,
 	url += "&maximized_queue=" +
 	       std::string(maximized_queue_query_value(
 		       context.maximized_queue_mode));
+	url += "&theme=" +
+	       std::string(overlay_theme_query_value(context.overlay_theme));
 	return url;
 }
 
@@ -757,6 +767,8 @@ void source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "compact_playlist_reveal_ms", 3000);
 	obs_data_set_default_int(settings, "maximized_queue_mode",
 				 kMaximizedQueueSingle);
+	obs_data_set_default_int(settings, "overlay_theme",
+				 kOverlayThemeMapleStoryLike);
 	obs_data_set_default_bool(settings, "show_composer", true);
 	obs_data_set_default_bool(settings, "show_full_playlist", true);
 	obs_data_set_default_string(settings, "json_output_path",
@@ -783,6 +795,17 @@ obs_properties_t *source_get_properties(void *)
 	obs_property_list_add_int(
 		display_mode_list, obs_module_text("DisplayMode.UiCardText"),
 		kDisplayModeUiCardText);
+
+	obs_property_t *overlay_theme_list = obs_properties_add_list(
+		props, "overlay_theme", obs_module_text("OverlayTheme"),
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(
+		overlay_theme_list,
+		obs_module_text("OverlayTheme.MapleStoryLike"),
+		kOverlayThemeMapleStoryLike);
+	obs_property_list_add_int(
+		overlay_theme_list, obs_module_text("OverlayTheme.Modern"),
+		kOverlayThemeModern);
 
 	obs_property_t *overlay_mode_list = obs_properties_add_list(
 		props, "overlay_work_mode", obs_module_text("OverlayWorkMode"),
@@ -851,6 +874,7 @@ void source_update(void *data, obs_data_t *settings)
 	const int old_compact_reveal_ms =
 		context->compact_playlist_reveal_ms;
 	const int old_maximized_queue_mode = context->maximized_queue_mode;
+	const int old_overlay_theme = context->overlay_theme;
 
 	context->app_filter = obs_data_get_string(settings, "app_filter");
 	context->format = obs_data_get_string(settings, "format");
@@ -884,6 +908,11 @@ void source_update(void *data, obs_data_t *settings)
 				kMaximizedQueueSingle
 			? kMaximizedQueueSingle
 			: kMaximizedQueueMultiple;
+	context->overlay_theme =
+		static_cast<int>(obs_data_get_int(settings, "overlay_theme")) ==
+				kOverlayThemeModern
+			? kOverlayThemeModern
+			: kOverlayThemeMapleStoryLike;
 	context->show_composer = obs_data_get_bool(settings, "show_composer");
 	context->show_full_playlist =
 		obs_data_get_bool(settings, "show_full_playlist");
@@ -913,7 +942,8 @@ void source_update(void *data, obs_data_t *settings)
 		context->overlay_work_mode != old_overlay_work_mode ||
 		context->upcoming_tracks != old_upcoming_tracks ||
 		context->compact_playlist_reveal_ms != old_compact_reveal_ms ||
-		context->maximized_queue_mode != old_maximized_queue_mode;
+		context->maximized_queue_mode != old_maximized_queue_mode ||
+		context->overlay_theme != old_overlay_theme;
 
 	write_overlay_config(*context);
 	ensure_active_source(context);
@@ -945,7 +975,9 @@ void write_overlay_config(const SourceContext &context)
 	     << context.compact_playlist_reveal_ms << ",\n";
 	json << "  \"maximizedQueueMode\": \""
 	     << maximized_queue_query_value(context.maximized_queue_mode)
-	     << "\"\n";
+	     << "\",\n";
+	json << "  \"theme\": \""
+	     << overlay_theme_query_value(context.overlay_theme) << "\"\n";
 	json << "}\n";
 	const std::string json_content = json.str();
 
