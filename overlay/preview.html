@@ -4,7 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WMP Now Playing Preview</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css" id="theme-stylesheet">
+  <script>
+    (function () {
+      var theme = new URLSearchParams(location.search).get('theme');
+      if (theme === 'modern') {
+        document.getElementById('theme-stylesheet').setAttribute('href', 'style-modern.css');
+      }
+    })();
+  </script>
   <style>
     body {
       background: #101820;
@@ -47,6 +55,7 @@
     <button onclick="toggleLongTitle()">Long Title</button>
     <button onclick="togglePlaylist()">Playlist</button>
     <button onclick="setWaiting()">Waiting</button>
+    <button onclick="toggleTheme()">Theme</button>
   </div>
 
   <main id="card" class="player-window mode-minimized playing" aria-live="polite">
@@ -374,6 +383,15 @@
     function setWaiting() {
       waiting = true;
       render();
+    }
+
+    function toggleTheme() {
+      const link = document.getElementById('theme-stylesheet');
+      if (!link) return;
+      const next = link.getAttribute('href') === 'style-modern.css'
+        ? 'style.css'
+        : 'style-modern.css';
+      link.setAttribute('href', next);
     }
 
     render();

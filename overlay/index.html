@@ -4,7 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WMP Now Playing</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css" id="theme-stylesheet">
+  <script>
+    (function () {
+      var theme = new URLSearchParams(location.search).get('theme');
+      if (theme === 'modern') {
+        document.getElementById('theme-stylesheet').setAttribute('href', 'style-modern.css');
+      }
+    })();
+  </script>
 </head>
 <body>
   <main id="card" class="player-window mode-minimized waiting" aria-live="polite">
@@ -364,6 +372,19 @@
       return '';
     }
 
+    function normalizeTheme(value) {
+      return value === 'modern' ? 'modern' : 'maplestory';
+    }
+
+    function applyTheme(theme) {
+      const link = document.getElementById('theme-stylesheet');
+      if (!link) return;
+      const target = theme === 'modern' ? 'style-modern.css' : 'style.css';
+      if (link.getAttribute('href') !== target) {
+        link.setAttribute('href', target);
+      }
+    }
+
     async function loadOverlayConfig() {
       const params = new URLSearchParams(window.location.search);
       const settings = {
@@ -372,6 +393,7 @@
         upcomingTracks: DEFAULTS.upcomingTracks,
         compactRevealMs: DEFAULTS.compactRevealMs,
         maximizedQueueMode: DEFAULTS.maximizedQueueMode,
+        theme: 'maplestory',
       };
 
       try {
@@ -397,6 +419,9 @@
             config.maximizedQueueMode || config.maximized_queue,
             settings.maximizedQueueMode
           );
+          if (config.theme) {
+            settings.theme = normalizeTheme(config.theme);
+          }
         }
       } catch (error) {}
 
@@ -432,6 +457,12 @@
           params.get('maximized_queue')
         );
       }
+
+      if (params.has('theme')) {
+        settings.theme = normalizeTheme(params.get('theme'));
+      }
+
+      applyTheme(settings.theme);
 
       if (!settings.jsonUrl) {
         settings.jsonUrl = await discoverJsonInObs();
