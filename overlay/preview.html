@@ -51,6 +51,7 @@
     <button onclick="setMode('minimized')">Minimized</button>
     <button onclick="setMode('maximized')">Maximized</button>
     <button onclick="nextTrack()">Next</button>
+    <button onclick="cycleStatus()">Status</button>
     <button onclick="toggleMaximizedQueue()">Queue Mode</button>
     <button onclick="toggleLongTitle()">Long Title</button>
     <button onclick="togglePlaylist()">Playlist</button>
@@ -61,6 +62,7 @@
   <main id="card" class="player-window mode-minimized playing" aria-live="polite">
     <header class="window-bar">
       <h1>MUSIC PLAYER</h1>
+      <span id="track-count" class="q-count hidden" aria-hidden="true"></span>
       <div class="window-actions" aria-hidden="true">
         <span id="mode-action" class="window-icon plus"></span>
         <span class="window-divider"></span>
@@ -79,6 +81,8 @@
             </svg>
             <span>NOW PLAYING</span>
           </div>
+          <span id="state-tag" class="q-tag">Playing</span>
+          <span id="position-tag" class="q-badge hidden"></span>
           <div class="sound-mark" aria-hidden="true">
             <svg class="speaker" viewBox="0 0 24 24">
               <path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/>
@@ -130,6 +134,9 @@
             <span id="time-duration">--:--</span>
           </div>
         </div>
+
+        <div class="q-section q-section-progress">Progress</div>
+        <div class="q-section q-section-info">Info</div>
       </div>
     </section>
 
@@ -141,7 +148,7 @@
       <ol id="compact-list" class="compact-list"></ol>
       <div class="expanded-list">
         <article id="previous-card" class="song-card hidden">
-          <div class="song-label">
+          <div class="song-label" data-short="PREV">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 6 9 12l9 6V6zM6 6h2v12H6z" fill="currentColor"/>
             </svg>
@@ -160,7 +167,7 @@
           </div>
         </article>
         <section id="next-card" class="song-card hidden">
-          <div class="song-label">
+          <div class="song-label" data-short="NEXT">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="m6 6 9 6-9 6V6zM16 6h2v12h-2z" fill="currentColor"/>
             </svg>
@@ -170,6 +177,12 @@
         </section>
       </div>
     </section>
+
+    <div class="q-actions">
+      <div id="status-button" class="q-button">
+        <span id="status-label">Playing</span>
+      </div>
+    </div>
 
     <footer id="status-footer" class="status-footer">
       <span class="info-dot" aria-hidden="true">i</span>
@@ -195,6 +208,12 @@
     let longTitle = params.get('long') === '1';
     let withPlaylist = params.get('playlist') !== '0';
     let waiting = params.get('waiting') === '1';
+    const STATUSES = ['Playing', 'Paused', 'Stopped'];
+    let status = STATUSES.includes(params.get('status')) ? params.get('status') : 'Playing';
+    const upcomingParam = Number(params.get('upcoming'));
+    const upcoming = Number.isFinite(upcomingParam) && params.has('upcoming')
+      ? Math.max(0, Math.min(10, Math.round(upcomingParam)))
+      : 3;
     let revealTimer = null;
     let revealDeadline = 0;
 
@@ -224,7 +243,20 @@
       nextCard: document.getElementById('next-card'),
       nextList: document.getElementById('next-list'),
       footerText: document.getElementById('footer-text'),
+      trackCount: document.getElementById('track-count'),
+      stateTag: document.getElementById('state-tag'),
+      positionTag: document.getElementById('position-tag'),
+      statusLabel: document.getElementById('status-label'),
+      composerItem: document.querySelector('.composer-item'),
+      albumItem: document.querySelector('.album-item'),
     };
+
+    function setBadges(count, position) {
+      els.trackCount.textContent = count > 0 ? `${count}` : '';
+      els.trackCount.classList.toggle('hidden', count <= 0);
+      els.positionTag.textContent = count > 0 && position >= 0 ? `${position + 1} / ${count}` : '';
+      els.positionTag.classList.toggle('hidden', count <= 0 || position < 0);
+    }
 
     function formatTime(ms) {
       const total = Math.floor(Math.max(0, ms) / 1000);
@@ -244,14 +276,16 @@
     function renderPlaylist() {
       if (!withPlaylist) {
         els.playlistPanel.classList.add('hidden');
+        setBadges(0, -1);
         return;
       }
 
       els.playlistPanel.classList.remove('hidden');
       els.playlistCount.textContent = `${tracks.length} tracks`;
+      setBadges(tracks.length, current);
 
       const start = Math.max(0, current - 1);
-      const compact = tracks.slice(start, Math.min(tracks.length, current + 4));
+      const compact = tracks.slice(start, Math.min(tracks.length, current + upcoming + 1));
       els.compactList.replaceChildren(...compact.map((track) => {
         const li = document.createElement('li');
         if (track.index === current) li.className = 'current';
@@ -272,7 +306,7 @@
 
       const nextCount = mode === 'maximized' && maximizedQueueMode === 'single'
         ? 1
-        : 3;
+        : upcoming;
       const next = tracks.slice(current + 1, current + 1 + nextCount);
       if (next.length) {
         els.nextCard.classList.remove('hidden');
@@ -301,25 +335,37 @@
         revealTimer = null;
         revealDeadline = 0;
         els.card.classList.add('waiting');
-        els.card.classList.remove('playing', 'paused', 'playlist-reveal');
+        els.card.classList.remove('playing', 'paused', 'stopped', 'playlist-reveal');
         els.title.textContent = 'Waiting for Windows Media Player';
         els.artist.textContent = 'Start playback in Windows Media Player Legacy.';
         els.composer.textContent = '--';
         els.album.textContent = '--';
+        els.composerItem.classList.add('is-fallback');
+        els.albumItem.classList.add('is-empty');
+        els.stateTag.textContent = 'Waiting';
+        els.statusLabel.textContent = 'Waiting for WMP';
+        setBadges(0, -1);
         setProgress(0, '--:--', '--:--');
         els.playlistPanel.classList.add('hidden');
+        els.footerText.textContent = 'Waiting for your selected music source.';
         return;
       }
 
       const track = tracks[current];
-      els.card.classList.add('playing');
-      els.card.classList.remove('waiting', 'paused');
+      els.card.classList.remove('waiting');
+      els.card.classList.toggle('playing', status === 'Playing');
+      els.card.classList.toggle('paused', status === 'Paused');
+      els.card.classList.toggle('stopped', status === 'Stopped');
+      els.stateTag.textContent = status;
+      els.statusLabel.textContent = status;
       els.title.textContent = longTitle
         ? 'The World of Paradox and the Extremely Long Title That Should Never Break the Window'
         : track.title;
       els.artist.textContent = track.artist;
       els.composer.textContent = 'Asteria';
       els.album.textContent = track.album;
+      els.composerItem.classList.remove('is-fallback');
+      els.albumItem.classList.remove('is-empty');
       els.footerText.textContent = 'Playing from WMP Legacy COM.';
       setProgress(0.38, '1:24', formatTime(track.duration_sec * 1000));
       renderPlaylist();
@@ -360,6 +406,12 @@
       render();
       revealDeadline = Date.now() + 3000;
       scheduleRevealClose();
+    }
+
+    function cycleStatus() {
+      waiting = false;
+      status = STATUSES[(STATUSES.indexOf(status) + 1) % STATUSES.length];
+      render();
     }
 
     function toggleMaximizedQueue() {

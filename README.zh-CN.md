@@ -1,6 +1,6 @@
 # OBS WMP Legacy 正在播放
 
-OBS Studio 源插件，通过 COM 自动化显示 **Windows Media Player (Legacy)** 的正在播放元数据。包含适用于直播的精美 HTML/CSS 叠加层。
+OBS Studio 源插件，通过 COM 自动化显示 **Windows Media Player (Legacy)** 的正在播放元数据。包含适用于直播的 HTML/CSS 叠加层：默认仿照 MapleStory（枫之谷/冒险岛）游戏内的任务界面，另有现代主题。
 
 > **注意：** 本插件仅支持 Windows Media Player (Legacy)（`wmplayer.exe`），**不支持** Windows 11 自带的新版"媒体播放器"应用。
 
@@ -9,7 +9,7 @@ OBS Studio 源插件，通过 COM 自动化显示 **Windows Media Player (Legacy
 - 注册名为 **Windows Media Player (Legacy) Now Playing** 的 OBS 输入源。
 - 通过 COM 远程模式（`IWMPRemoteMediaServices`）连接到正在运行的 `wmplayer.exe` 实例。
 - 读取曲目标题、艺术家、专辑、专辑艺术家、作曲家、播放状态、播放位置、时长及完整播放列表。
-- **直接在 OBS 源内部渲染精美的毛玻璃风格"正在播放"叠加层**——通过内嵌的私有浏览器源实现，**无需再添加第二个浏览器源**。
+- **直接在 OBS 源内部渲染"正在播放"叠加层**——通过内嵌的私有浏览器源实现，**无需再添加第二个浏览器源**。
 - 同时实时写入 JSON 状态文件，方便外部叠加层 / 其他消费者使用。
 
 ## 工作原理
@@ -38,9 +38,18 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 
 ## 正在播放叠加层
 
-精美的"正在播放"叠加层（毛玻璃风格、动态 EQ 条、发光渐变进度条）现在**直接在插件源内部渲染**，由内嵌的私有 OBS 浏览器源实现。**不再需要添加第二个浏览器源。**
+"正在播放"叠加层**直接在插件源内部渲染**，由内嵌的私有 OBS 浏览器源实现。**不再需要添加第二个浏览器源。**
 
 叠加层可在紧凑的最小化窗口模式（默认）和更完整的最大化播放器模式之间切换。最大化模式会显示当前曲目的前一首，以及当前播放列表中可配置数量的后续曲目；最小化模式会在切歌时短暂展开当前播放列表，让观众看到当前曲目所在位置。
+
+### 叠加层主题
+
+- **枫之谷任务界面主题**（默认）：按游戏原生像素尺寸复刻 MapleStory 游戏内的任务界面，与游戏画面 1:1 并排（按 1366x768 画布设计）。
+  - *最小化*仿「任务助手 Quest Helper」（宽 222 px）：状态标签、曲名、艺术家和 `m:ss / m:ss` 时间，切歌时播放列表以额外条目的形式展开。
+  - *最大化*仿「任务信息 Quest Info」窗口（宽 322 px）：带列表位置的标题区、*Progress* 与 *Info* 分节、上一首/下一首信息框和状态大按钮。
+  - 源会自动使用上述宽度；在 OBS 中保持 100% 缩放可获得清晰文字。标题字体在已安装 *Arial Narrow*（随 Microsoft Office 安装）时使用它，否则回退到 Bahnschrift。
+  - 外观完全由 CSS 复刻，不包含任何游戏素材。MapleStory 是 NEXON 的商标，本项目与 NEXON 无关。
+- **现代主题**：扁平深色面板，宽 200–300 px（由*嵌入式覆盖层宽度*设置）。
 
 如果您喜欢文本输出，可以在源的 *Display mode* 设置中选择 **Template Text** 或 **UI Card (Text)**。
 
@@ -65,7 +74,9 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
            zh-CN.ini
          overlay/
            index.html
+           preview.html
            style.css
+           style-modern.css
    install.ps1
    ```
 3. 在 PowerShell 中运行 `install.ps1`：
@@ -79,6 +90,7 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 - 自动检测 OBS Studio 安装位置（或提示输入路径）
 - 复制 `obs-wmp-legacy.dll` 和 `wmp_bridge.exe` 到 `<OBS>/obs-plugins/64bit/`
 - 复制叠加层文件到 `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`
+- 复制语言文件到 `<OBS>/data/obs-plugins/obs-wmp-legacy/locale/`
 - 在 `%APPDATA%/obs-wmp-legacy/` 创建 JSON 输出目录
 
 ### 手动安装
@@ -92,9 +104,9 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 安装插件后：
 
 1. 在 OBS 中添加源 → **Windows Media Player (Legacy) Now Playing**。
-2. 完成——精美的毛玻璃叠加层会在该单一源内部直接渲染。在场景中按需放置和缩放即可。
+2. 完成——叠加层会在该单一源内部直接渲染。在场景中按需放置即可。
 
-（叠加层的宽度/高度可在源的**属性**面板中调整。）
+（主题、窗口模式和高度可在源的**属性**面板中设置。枫之谷主题使用固定的原生宽度；现代主题的宽度可调。）
 
 如果您希望在插件外部使用叠加层（例如在另一台机器或独立的浏览器源上），叠加层仍然安装到：
 
@@ -107,8 +119,12 @@ JSON 状态写入 `%APPDATA%/obs-wmp-legacy/now-playing.json`。在浏览器源 
 外部浏览器源还可通过 URL/config 指定：
 
 - `mode=minimized|maximized`
+- `theme=maplestory|modern` 或 `{"theme":"maplestory"}`
 - `upcoming=3` 或 `{"upcomingTracks":3}`
 - `reveal_ms=3000` 或 `{"compactRevealMs":3000}`
+- `maximized_queue=single|multiple` 或 `{"maximizedQueueMode":"single"}`
+
+`overlay/preview.html` 可用模拟数据预览叠加层（按钮可切换模式、播放状态、歌单布局和主题）。
 
 ## 构建
 
@@ -140,10 +156,13 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 | 设置 | 说明 |
 |------|------|
 | **App filter** | 用于识别 WMP 进程的子字符串。默认：`wmplayer`。 |
-| **Display mode** | `Embedded Overlay`（默认，在源内直接渲染精美的浏览器叠加层）、`Template Text` 或 `UI Card (Text)`。 |
+| **Display mode** | `Embedded Overlay`（默认，在源内直接渲染浏览器叠加层）、`Template Text` 或 `UI Card (Text)`。 |
+| **Overlay theme** | `枫之谷任务界面主题`（默认）或 `现代主题`。见[叠加层主题](#叠加层主题)。 |
 | **Overlay work mode** | `Minimized Window`（默认紧凑布局）或 `Maximized Window`（带前一首/后续曲目的完整播放器）。 |
-| **Embedded overlay width/height** | 内嵌叠加层像素尺寸（最小化窗口默认 520x520，以容纳切歌展开动画；最大化模式会自动使用不小于 570px 的宽度，并按后续曲目数量预留足够高度）。 |
-| **Upcoming tracks** | 最大化播放列表窗口中显示的当前曲目后续曲目数量。默认：3。 |
+| **Embedded overlay width** | 仅现代主题：200–300 px（默认 300）。枫之谷主题下隐藏，宽度固定为 222 px（最小化）/ 322 px（最大化）。 |
+| **Embedded overlay height** | 内嵌叠加层的最小高度（默认 350）。最大化模式至少 480 px；枫之谷主题下还会自动增高，以容纳最小化的歌单展开，以及「前1首+后面多首」布局中的每首后续曲目。 |
+| **Upcoming tracks** | 最小化歌单展开和最大化「前1首+后面多首」布局中显示的后续曲目数量。默认：3。 |
+| **Maximized playlist layout** | `前1首+后1首`（默认）或 `前1首+后面多首`（显示设定数量的后续曲目）。 |
 | **Compact playlist reveal** | 最小化窗口在切歌后展开播放列表的时长。默认：3000 ms。 |
 | **Format** | 输出模板（在 Template Text 模式下使用）。 |
 | **Progress width** | `{progress_bar}` 的字符宽度。 |
@@ -176,6 +195,6 @@ cmake --install build --config RelWithDebInfo --prefix "C:\Program Files\obs-stu
 
 ### 显示模式
 
-- **Embedded Overlay**（默认）：在源内部通过内嵌的私有 OBS 浏览器源渲染的精美毛玻璃"正在播放"叠加层，支持最小化和最大化窗口布局。无需第二个源。
-- **UI Card (Text)**：带图标、作曲家信息和播放列表显示的结构化正在播放文本面板。
+- **Embedded Overlay**（默认）：在源内部通过内嵌的私有 OBS 浏览器源渲染的"正在播放"叠加层，可选枫之谷任务界面主题或现代主题，支持最小化和最大化窗口布局。无需第二个源。
+- **UI Card (Text)**：带作曲家信息和播放列表显示的结构化正在播放文本面板。
 - **Template Text**：可自定义的令牌模板模式，完全控制输出格式。
