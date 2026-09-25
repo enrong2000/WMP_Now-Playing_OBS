@@ -90,6 +90,7 @@ Windows Media Player (Legacy) 不会将自身注册到运行对象表（ROT）�
 - 自动检测 OBS Studio 安装位置（或提示输入路径）
 - 复制 `obs-wmp-legacy.dll` 和 `wmp_bridge.exe` 到 `<OBS>/obs-plugins/64bit/`
 - 复制叠加层文件到 `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`
+- 复制语言文件到 `<OBS>/data/obs-plugins/obs-wmp-legacy/locale/`
 - 在 `%APPDATA%/obs-wmp-legacy/` 创建 JSON 输出目录
 
 ### 手动安装

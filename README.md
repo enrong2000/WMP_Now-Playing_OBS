@@ -90,6 +90,7 @@ The installer will:
 - Auto-detect your OBS Studio installation (or prompt for the path)
 - Copy `obs-wmp-legacy.dll` and `wmp_bridge.exe` to `<OBS>/obs-plugins/64bit/`
 - Copy overlay files to `<OBS>/data/obs-plugins/obs-wmp-legacy/overlay/`
+- Copy locale files to `<OBS>/data/obs-plugins/obs-wmp-legacy/locale/`
 - Create the JSON output directory at `%APPDATA%/obs-wmp-legacy/`
 
 ### Manual Installation
