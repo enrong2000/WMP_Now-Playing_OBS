@@ -1,6 +1,6 @@
 # OBS WMP Legacy Now-Playing
 
-OBS Studio source plugin that displays now-playing metadata from **Windows Media Player (Legacy)** via COM automation. Includes a premium HTML/CSS overlay for live streams.
+OBS Studio source plugin that displays now-playing metadata from **Windows Media Player (Legacy)** via COM automation. Includes an HTML/CSS overlay for live streams styled after MapleStory's in-game Quest UI, plus a Modern theme.
 
 > **Note:** This plugin targets Windows Media Player (Legacy) (`wmplayer.exe`) exclusively. It does **not** support the new Media Player app shipped with Windows 11.
 
@@ -9,7 +9,7 @@ OBS Studio source plugin that displays now-playing metadata from **Windows Media
 - Registers an OBS input source named **Windows Media Player (Legacy) Now Playing**.
 - Connects to a running `wmplayer.exe` instance using COM (`IWMPRemoteMediaServices` remote mode).
 - Reads title, artist, album, album artist, composer, playback state, position, duration, and the full playlist.
-- Renders the **rich glassmorphism Now-Playing overlay directly inside the OBS source** via an embedded private Browser Source. **No separate Browser Source is required.**
+- Renders the **Now-Playing overlay directly inside the OBS source** via an embedded private Browser Source. **No separate Browser Source is required.**
 - Also writes real-time media state to a JSON file for use by external overlays / consumers.
 
 ## How It Works
@@ -38,9 +38,18 @@ The plugin detects elevation and de-elevates the bridge through a **three-tier f
 
 ## Now-Playing Overlay
 
-The rich Now-Playing overlay (glassmorphism design, animated EQ bars, gradient progress bar) is rendered **inside the plugin source itself** via an embedded private OBS Browser Source. You do **not** need to add a second Browser Source.
+The Now-Playing overlay is rendered **inside the plugin source itself** via an embedded private OBS Browser Source. You do **not** need to add a second Browser Source.
 
 The overlay can run as a compact minimized window (default) or as a larger maximized player. In maximized mode it shows the previous track and a configurable number of upcoming tracks from the current playlist. In minimized mode it briefly expands the current playlist when the track changes so viewers can see the current position in the queue.
+
+### Overlay Themes
+
+- **MapleStory Quest UI** (default): recreates MapleStory's in-game Quest UI at native pixel size, so it sits next to the game at 1:1 scale (designed for a 1366x768 canvas).
+  - *Minimized* looks like the **Quest Helper** (222 px wide): state tag, title, artist and `m:ss / m:ss` time, with the playlist unfolding as extra entries on a track change.
+  - *Maximized* looks like the **Quest Info** window (322 px wide): header with playlist position, *Progress* and *Info* sections, previous/next boxes and a status button.
+  - The source sizes itself to these widths; keep it at 100% scale in OBS for crisp text. The title font uses *Arial Narrow* when installed (it ships with Microsoft Office) and falls back to Bahnschrift.
+  - The look is recreated in CSS only; no game assets are included. MapleStory is a trademark of NEXON; this project is not affiliated with NEXON.
+- **Modern**: a flat dark panel, 200–300 px wide (set with *Embedded overlay width*).
 
 If you prefer text output, choose **Template Text** or **UI Card (Text)** under the source's *Display mode* setting.
 
@@ -65,7 +74,9 @@ The overlay HTML/CSS files are still installed to `<OBS>/data/obs-plugins/obs-wm
            zh-CN.ini
          overlay/
            index.html
+           preview.html
            style.css
+           style-modern.css
    install.ps1
    ```
 3. Run `install.ps1` in PowerShell:
@@ -92,9 +103,9 @@ The installer will:
 After installing the plugin:
 
 1. In OBS, add a source -> **Windows Media Player (Legacy) Now Playing**.
-2. That's it — the rich glassmorphism overlay renders inside that single source. Position and resize it on your scene.
+2. That's it — the overlay renders inside that single source. Position it on your scene.
 
-(Width / height of the embedded overlay can be adjusted on the source's **Properties** panel.)
+(The theme, window mode and height are set on the source's **Properties** panel. The MapleStory theme uses a fixed native width; the Modern theme's width is adjustable.)
 
 If you want to use the overlay outside the plugin (e.g. on a separate Browser Source or another machine), it is still installed to:
 
@@ -107,8 +118,12 @@ and the JSON state is written to `%APPDATA%/obs-wmp-legacy/now-playing.json`. Pa
 Optional URL/config values for external Browser Sources:
 
 - `mode=minimized|maximized`
+- `theme=maplestory|modern` or `{"theme":"maplestory"}`
 - `upcoming=3` or `{"upcomingTracks":3}`
 - `reveal_ms=3000` or `{"compactRevealMs":3000}`
+- `maximized_queue=single|multiple` or `{"maximizedQueueMode":"single"}`
+
+`overlay/preview.html` shows the overlay with mock data (buttons switch mode, status, queue mode and theme).
 
 ## Build
 
@@ -140,10 +155,13 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 | Setting | Description |
 |---------|-------------|
 | **App filter** | Substring to identify the WMP process. Default: `wmplayer`. |
-| **Display mode** | `Embedded Overlay` (rich Browser-Source overlay rendered inside the plugin source; default), `Template Text`, or `UI Card (Text)`. |
+| **Display mode** | `Embedded Overlay` (Browser-Source overlay rendered inside the plugin source; default), `Template Text`, or `UI Card (Text)`. |
+| **Overlay theme** | `MapleStory Quest UI Theme` (default) or `Modern Theme`. See [Overlay Themes](#overlay-themes). |
 | **Overlay work mode** | `Minimized Window` (default compact layout) or `Maximized Window` (larger player with previous/upcoming tracks). |
-| **Embedded overlay width/height** | Pixel dimensions of the embedded overlay (default 520x520 for the compact minimized window and its reveal animation; maximized mode automatically uses at least 570px wide and enough height for the selected upcoming count). |
-| **Upcoming tracks** | Number of tracks after the current one to show in the maximized playlist window. Default: 3. |
+| **Embedded overlay width** | Modern theme only: 200–300 px (default 300). Hidden for the MapleStory theme, which is always 222 px (minimized) / 322 px (maximized). |
+| **Embedded overlay height** | Minimum height of the embedded overlay (default 350). Maximized mode always uses at least 480 px; with the MapleStory theme the source also grows to fit the minimized playlist reveal and each upcoming track in the *Previous 1 + multiple next* layout. |
+| **Upcoming tracks** | Number of tracks after the current one shown in the minimized playlist reveal and in the maximized *Previous 1 + multiple next* layout. Default: 3. |
+| **Maximized playlist layout** | `Previous 1 + next 1` (default) or `Previous 1 + multiple next` (the configured number of upcoming tracks). |
 | **Compact playlist reveal** | How long the minimized window expands the playlist after a track change. Default: 3000 ms. |
 | **Format** | Output template (used in Template Text mode). |
 | **Progress width** | Character width of `{progress_bar}`. |
@@ -176,6 +194,6 @@ The repository includes `.github/workflows/windows-build-release.yml`.
 
 ### Display Modes
 
-- **Embedded Overlay** (default): rich glassmorphism Now-Playing panel rendered inside the source via an embedded private OBS Browser Source. Supports minimized and maximized window layouts with no second source required.
-- **UI Card (Text)**: structured now-playing text panel with icons, composer, and playlist display.
+- **Embedded Overlay** (default): Now-Playing panel rendered inside the source via an embedded private OBS Browser Source, in the MapleStory Quest UI or Modern theme. Supports minimized and maximized window layouts with no second source required.
+- **UI Card (Text)**: structured now-playing text panel with composer and playlist display.
 - **Template Text**: customizable token template mode for full control over output format.

@@ -42,6 +42,14 @@ body {
   display: none !important;
 }
 
+.q-count,
+.q-tag,
+.q-badge,
+.q-section,
+.q-actions {
+  display: none !important;
+}
+
 .player-window {
   position: relative;
   width: min(300px, calc(100vw - 4px));

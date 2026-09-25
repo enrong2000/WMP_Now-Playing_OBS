@@ -40,6 +40,18 @@ constexpr int kMaximizedQueueMultiple = 1;
 constexpr int kOverlayThemeMapleStoryLike = 0;
 constexpr int kOverlayThemeModern = 1;
 
+/*
+ * The MapleStory theme mirrors the in-game Quest UI at native pixel size:
+ * minimized = Quest Helper (222px), maximized = Quest Info window (322px).
+ * Heights were measured in the overlay (two-line title, playlist revealed).
+ */
+constexpr int kQuestHelperWidth = 222;
+constexpr int kQuestHelperBaseHeight = 120;
+constexpr int kQuestHelperRowHeight = 20;
+constexpr int kQuestInfoWidth = 322;
+constexpr int kQuestInfoBaseHeight = 470;
+constexpr int kQuestInfoQueueRowHeight = 17;
+
 std::string default_json_path()
 {
 	wchar_t *appdata = nullptr;
@@ -85,12 +97,36 @@ struct SourceContext {
 
 int effective_overlay_width(const SourceContext &context)
 {
+	if (context.overlay_theme == kOverlayThemeMapleStoryLike)
+		return context.overlay_work_mode == kOverlayModeMaximized
+			       ? kQuestInfoWidth
+			       : kQuestHelperWidth;
 	return std::clamp(context.overlay_width, kMinOverlayWidth,
 			  kMaxOverlayWidth);
 }
 
 int effective_overlay_height(const SourceContext &context)
 {
+	if (context.overlay_theme == kOverlayThemeMapleStoryLike) {
+		if (context.overlay_work_mode == kOverlayModeMaximized) {
+			const int queue_rows =
+				context.maximized_queue_mode ==
+						kMaximizedQueueMultiple
+					? std::max(0, context.upcoming_tracks - 1)
+					: 0;
+			return std::max(
+				{context.overlay_height,
+				 kMaximizedOverlayRecommendedHeight,
+				 kQuestInfoBaseHeight +
+					 queue_rows * kQuestInfoQueueRowHeight});
+		}
+		/* previous + current + upcoming rows when the playlist reveals */
+		return std::max(context.overlay_height,
+				kQuestHelperBaseHeight +
+					(context.upcoming_tracks + 2) *
+						kQuestHelperRowHeight);
+	}
+
 	if (context.overlay_work_mode == kOverlayModeMaximized)
 		return std::max(context.overlay_height,
 				kMaximizedOverlayRecommendedHeight);
@@ -775,6 +811,17 @@ void source_get_defaults(obs_data_t *settings)
 				    default_json_path().c_str());
 }
 
+/* The MapleStory theme uses the native Quest UI width, so hide the width setting. */
+bool overlay_theme_modified(obs_properties_t *props, obs_property_t *,
+			    obs_data_t *settings)
+{
+	const bool modern = obs_data_get_int(settings, "overlay_theme") ==
+			    kOverlayThemeModern;
+	obs_property_set_visible(obs_properties_get(props, "overlay_width"),
+				 modern);
+	return true;
+}
+
 obs_properties_t *source_get_properties(void *)
 {
 	obs_properties_t *props = obs_properties_create();
@@ -806,6 +853,8 @@ obs_properties_t *source_get_properties(void *)
 	obs_property_list_add_int(
 		overlay_theme_list, obs_module_text("OverlayTheme.Modern"),
 		kOverlayThemeModern);
+	obs_property_set_modified_callback(overlay_theme_list,
+					   overlay_theme_modified);
 
 	obs_property_t *overlay_mode_list = obs_properties_add_list(
 		props, "overlay_work_mode", obs_module_text("OverlayWorkMode"),

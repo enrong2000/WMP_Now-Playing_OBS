@@ -18,6 +18,7 @@
   <main id="card" class="player-window mode-minimized waiting" aria-live="polite">
     <header class="window-bar">
       <h1>MUSIC PLAYER</h1>
+      <span id="track-count" class="q-count hidden" aria-hidden="true"></span>
       <div class="window-actions" aria-hidden="true">
         <span id="mode-action" class="window-icon plus"></span>
         <span class="window-divider"></span>
@@ -36,6 +37,8 @@
             </svg>
             <span>NOW PLAYING</span>
           </div>
+          <span id="state-tag" class="q-tag">Waiting</span>
+          <span id="position-tag" class="q-badge hidden"></span>
           <div class="sound-mark" aria-hidden="true">
             <svg class="speaker" viewBox="0 0 24 24">
               <path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor"/>
@@ -91,6 +94,9 @@
             <span id="time-duration">--:--</span>
           </div>
         </div>
+
+        <div class="q-section q-section-progress">Progress</div>
+        <div class="q-section q-section-info">Info</div>
       </div>
     </section>
 
@@ -104,7 +110,7 @@
 
       <div class="expanded-list">
         <article id="previous-card" class="song-card hidden">
-          <div class="song-label">
+          <div class="song-label" data-short="PREV">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 6 9 12l9 6V6zM6 6h2v12H6z" fill="currentColor"/>
             </svg>
@@ -124,7 +130,7 @@
         </article>
 
         <section id="next-card" class="song-card hidden">
-          <div class="song-label">
+          <div class="song-label" data-short="NEXT">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="m6 6 9 6-9 6V6zM16 6h2v12h-2z" fill="currentColor"/>
             </svg>
@@ -134,6 +140,12 @@
         </section>
       </div>
     </section>
+
+    <div class="q-actions">
+      <div id="status-button" class="q-button">
+        <span id="status-label">Waiting for WMP</span>
+      </div>
+    </div>
 
     <footer id="status-footer" class="status-footer">
       <span class="info-dot" aria-hidden="true">i</span>
@@ -190,6 +202,18 @@
       nextCard: document.getElementById('next-card'),
       nextList: document.getElementById('next-list'),
       footerText: document.getElementById('footer-text'),
+      trackCount: document.getElementById('track-count'),
+      stateTag: document.getElementById('state-tag'),
+      positionTag: document.getElementById('position-tag'),
+      statusLabel: document.getElementById('status-label'),
+      composerItem: document.querySelector('.composer-item'),
+      albumItem: document.querySelector('.album-item'),
+    };
+
+    const STATUS_LABELS = {
+      Playing: 'Playing',
+      Paused: 'Paused',
+      Stopped: 'Stopped',
     };
 
     function isObsAbsoluteOrigin() {
@@ -523,12 +547,15 @@
       clearTimeout(state.revealTimer);
       state.revealTimer = null;
       state.revealDeadline = 0;
-      els.card.classList.remove('playing', 'paused', 'playlist-reveal');
+      els.card.classList.remove('playing', 'paused', 'stopped', 'playlist-reveal');
       els.card.classList.add('waiting');
       els.title.textContent = 'Waiting for Windows Media Player';
       els.artist.textContent = message || 'No now-playing data yet.';
       els.composer.textContent = '--';
       els.album.textContent = '--';
+      setMetaState(false, false);
+      setStatusText('Waiting', 'Waiting for WMP');
+      setPlaylistBadges(0, -1);
       updateProgress(0, '--:--', '--:--');
       els.playlistPanel.classList.add('hidden');
       els.compactList.replaceChildren();
@@ -536,6 +563,25 @@
       els.previousCard.classList.add('hidden');
       els.nextCard.classList.add('hidden');
       els.footerText.textContent = 'Waiting for your selected music source.';
+    }
+
+    function setStatusText(tagText, buttonText) {
+      els.stateTag.textContent = tagText;
+      els.statusLabel.textContent = buttonText;
+    }
+
+    function setPlaylistBadges(count, position) {
+      els.trackCount.textContent = count > 0 ? `${count}` : '';
+      els.trackCount.classList.toggle('hidden', count <= 0);
+      els.positionTag.textContent = count > 0 && position >= 0
+        ? `${position + 1} / ${count}`
+        : '';
+      els.positionTag.classList.toggle('hidden', count <= 0 || position < 0);
+    }
+
+    function setMetaState(hasComposer, hasAlbum) {
+      els.composerItem.classList.toggle('is-fallback', !hasComposer);
+      els.albumItem.classList.toggle('is-empty', !hasAlbum);
     }
 
     function updateProgress(progress, currentText, durationText) {
@@ -658,6 +704,7 @@
         els.nextList.replaceChildren();
         els.previousCard.classList.add('hidden');
         els.nextCard.classList.add('hidden');
+        setPlaylistBadges(0, -1);
         return;
       }
 
@@ -671,6 +718,7 @@
 
       els.playlistPanel.classList.remove('hidden');
       els.playlistCount.textContent = `${items.length} ${items.length === 1 ? 'track' : 'tracks'}`;
+      setPlaylistBadges(items.length, position);
 
       renderCompactList(items, currentIndex, position);
 
@@ -712,12 +760,16 @@
       const status = data.status || 'Unknown';
       els.card.classList.toggle('playing', status === 'Playing');
       els.card.classList.toggle('paused', status === 'Paused');
+      els.card.classList.toggle('stopped', status === 'Stopped');
       els.card.classList.remove('waiting');
+      const statusText = STATUS_LABELS[status] || 'Idle';
+      setStatusText(statusText, statusText);
 
       els.title.textContent = data.title || 'Unknown title';
       els.artist.textContent = data.artist || 'Unknown artist';
       els.composer.textContent = data.composer || data.artist || '--';
       els.album.textContent = data.album || '--';
+      setMetaState(Boolean(data.composer), Boolean(data.album));
       els.footerText.textContent = data.backend || data.source_app_id
         ? `Playing from ${data.backend || data.source_app_id}.`
         : 'Playing from your selected music source.';

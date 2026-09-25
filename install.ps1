@@ -135,8 +135,10 @@ if (-not (Test-Path $overlaySrc)) {
 
 if (Test-Path $overlaySrc) {
     Write-Step "Copying overlay files..."
-    Copy-Item (Join-Path $overlaySrc "index.html") -Destination $overlayDir -Force
-    Copy-Item (Join-Path $overlaySrc "style.css")  -Destination $overlayDir -Force
+    # Copy every overlay file (both theme stylesheets, preview page) except the
+    # runtime-generated config.json.
+    Get-ChildItem -Path (Join-Path $overlaySrc "*") -Exclude "config.json" |
+        Copy-Item -Destination $overlayDir -Recurse -Force
     Write-Ok "Overlay files installed to: $overlayDir"
 } else {
     Write-Warn "Overlay directory not found. Skipping overlay copy."
